@@ -1,6 +1,7 @@
 import "server-only";
 import Anthropic from "@anthropic-ai/sdk";
 import { betaZodOutputFormat } from "@anthropic-ai/sdk/helpers/beta/zod";
+import { ApiError, GoogleGenAI } from "@google/genai";
 import { z } from "zod/v4";
 import type { Scene, VideoStyle } from "./types";
 import { estimateDuration } from "./timing";
@@ -64,8 +65,20 @@ function toScenes(raw: { narration: string; onScreen: string; visualQuery: strin
   }));
 }
 
+type Provider = "gemini" | "claude" | "demo";
+
+function provider(): Provider {
+  if (process.env.GEMINI_API_KEY) return "gemini";
+  if (process.env.ANTHROPIC_API_KEY || process.env.ANTHROPIC_AUTH_TOKEN) return "claude";
+  return "demo";
+}
+
 export function aiEnabled() {
-  return Boolean(process.env.ANTHROPIC_API_KEY || process.env.ANTHROPIC_AUTH_TOKEN);
+  return provider() !== "demo";
+}
+
+export function aiProviderLabel() {
+  return { gemini: "Gemini", claude: "Claude", demo: "demo" }[provider()];
 }
 
 const SYSTEM = `You are a short-form video producer who writes viral TikTok / Reels / YouTube Shorts.
@@ -77,15 +90,31 @@ Rules:
 - visualQuery must be something a stock library would actually have (e.g. "city night traffic", "woman running sunrise"), never abstract words.
 - If the user provides a full script, keep their wording and meaning; only split it into scenes and tighten where needed.`;
 
+function userPrompt(input: GenerateInput) {
+  const wordBudget = Math.round(input.targetSeconds * 2.6);
+  return input.mode === "script"
+    ? `Here is my script. Split it into scenes for a ${input.style} short video.\n\n<script>\n${input.prompt}\n</script>`
+    : `Create a ${input.style} short video (~${input.targetSeconds} seconds, about ${wordBudget} spoken words total) about:\n\n<idea>\n${input.prompt}\n</idea>`;
+}
+
+function toStoryboard(parsed: z.infer<typeof StoryboardSchema>): Storyboard {
+  if (parsed.scenes.length === 0) throw new Error("The AI returned an empty storyboard. Please try again.");
+  return {
+    title: parsed.title.slice(0, 80),
+    hook: parsed.hook,
+    caption: parsed.caption,
+    hashtags: parsed.hashtags.map((h) => h.replace(/^#/, "").replace(/\s+/g, "")),
+    scenes: toScenes(parsed.scenes),
+  };
+}
+
 export async function generateStoryboard(input: GenerateInput): Promise<Storyboard> {
-  if (!aiEnabled()) return demoStoryboard(input);
+  const p = provider();
+  if (p === "demo") return demoStoryboard(input);
+  if (p === "gemini") return generateWithGemini(input);
 
   const client = new Anthropic();
-  const wordBudget = Math.round(input.targetSeconds * 2.6);
-  const user =
-    input.mode === "script"
-      ? `Here is my script. Split it into scenes for a ${input.style} short video.\n\n<script>\n${input.prompt}\n</script>`
-      : `Create a ${input.style} short video (~${input.targetSeconds} seconds, about ${wordBudget} spoken words total) about:\n\n<idea>\n${input.prompt}\n</idea>`;
+  const user = userPrompt(input);
 
   const response = await client.beta.messages.parse({
     model: MODEL,
@@ -101,18 +130,45 @@ export async function generateStoryboard(input: GenerateInput): Promise<Storyboa
   if (response.stop_reason === "refusal") {
     throw new Error("The AI declined to write this video. Try rephrasing your idea.");
   }
-  const parsed = response.parsed_output;
-  if (!parsed || parsed.scenes.length === 0) {
-    throw new Error("The AI returned an empty storyboard. Please try again.");
-  }
+  if (!response.parsed_output) throw new Error("The AI returned an empty storyboard. Please try again.");
+  return toStoryboard(response.parsed_output);
+}
 
-  return {
-    title: parsed.title.slice(0, 80),
-    hook: parsed.hook,
-    caption: parsed.caption,
-    hashtags: parsed.hashtags.map((h) => h.replace(/^#/, "").replace(/\s+/g, "")),
-    scenes: toScenes(parsed.scenes),
-  };
+// Google Gemini (works on the free tier). JSON mode + schema, validated with zod.
+async function generateWithGemini(input: GenerateInput): Promise<Storyboard> {
+  const ai = new GoogleGenAI({ apiKey: process.env.GEMINI_API_KEY });
+  const schema = z.toJSONSchema(StoryboardSchema) as Record<string, unknown>;
+  delete schema.$schema; // Gemini rejects the meta-schema key
+  let text: string | undefined;
+  try {
+    const res = await ai.models.generateContent({
+      model: process.env.GEMINI_MODEL || "gemini-flash-latest",
+      contents: userPrompt(input),
+      config: {
+        systemInstruction: SYSTEM,
+        responseMimeType: "application/json",
+        responseJsonSchema: schema,
+      },
+    });
+    text = res.text;
+  } catch (err) {
+    if (err instanceof ApiError) {
+      if (err.status === 429) throw new Error("Gemini free-tier rate limit hit. Wait a minute and try again.");
+      if (err.status === 400 || err.status === 403) throw new Error(`Gemini rejected the request: ${err.message}`);
+      if (err.status === 404) throw new Error("Gemini model not found. Set GEMINI_MODEL to a model your key can use.");
+    }
+    throw err;
+  }
+  if (!text) throw new Error("Gemini returned an empty response. Please try again.");
+  let json: unknown;
+  try {
+    json = JSON.parse(text);
+  } catch {
+    throw new Error("Gemini returned malformed JSON. Please try again.");
+  }
+  const parsed = StoryboardSchema.safeParse(json);
+  if (!parsed.success) throw new Error("Gemini's storyboard didn't match the expected format. Please try again.");
+  return toStoryboard(parsed.data);
 }
 
 // Offline fallback so the whole product loop works without an API key.

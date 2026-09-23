@@ -8,10 +8,12 @@
     "start": "next start",
     "lint": "eslint",
     "postinstall": "prisma generate",
-    "db:push": "prisma db push"
+    "db:push": "prisma db push",
+    "check:ai": "node scripts/check-gemini.mjs"
   },
   "dependencies": {
     "@anthropic-ai/sdk": "^0.128.0",
+    "@google/genai": "^2.24.0",
     "@prisma/client": "^6.19.3",
     "bcryptjs": "^3.0.3",
     "jose": "^6.2.12",

@@ -14,7 +14,15 @@ const SAMPLES = [
 
 const STEPS = ["Writing the script…", "Splitting into scenes…", "Finding visuals…", "Timing captions…"];
 
-export function Composer({ pro, aiEnabled, stockEnabled }: { pro: boolean; aiEnabled: boolean; stockEnabled: boolean }) {
+export function Composer({
+  pro,
+  aiProvider,
+  stockEnabled,
+}: {
+  pro: boolean;
+  aiProvider: string;
+  stockEnabled: boolean;
+}) {
   const router = useRouter();
   const [prompt, setPrompt] = useState("");
   const [mode, setMode] = useState<"idea" | "script">("idea");
@@ -168,7 +176,7 @@ export function Composer({ pro, aiEnabled, stockEnabled }: { pro: boolean; aiEna
 
         <div className="flex flex-col-reverse items-center justify-between gap-3 sm:flex-row">
           <p className="text-xs text-zinc-500">
-            {aiEnabled ? "AI script by Claude" : "Demo mode: add ANTHROPIC_API_KEY for AI scripts"} ·{" "}
+            {aiProvider !== "demo" ? `AI script by ${aiProvider}` : "Demo mode: add GEMINI_API_KEY for AI scripts"} ·{" "}
             {stockEnabled ? "Stock visuals by Pexels" : "Generated visuals"}
           </p>
           <button onClick={generate} disabled={loading || prompt.trim().length < 3} className="btn-primary w-full px-6 py-3 sm:w-auto">
