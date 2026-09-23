@@ -4,6 +4,10 @@ import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { useEffect, useState } from "react";
 import { ASPECTS, STYLES, type Aspect, type VideoStyle } from "@/lib/types";
+import type { UploadedPhoto } from "@/lib/upload";
+import { PhotoPicker } from "./PhotoPicker";
+
+const MAX_PHOTOS = 12;
 
 const SAMPLES = [
   "3 money habits that quietly make you rich in your 20s",
@@ -29,6 +33,7 @@ export function Composer({
   const [style, setStyle] = useState<VideoStyle>("educational");
   const [aspect, setAspect] = useState<Aspect>("9:16");
   const [targetSeconds, setTargetSeconds] = useState(30);
+  const [photos, setPhotos] = useState<UploadedPhoto[]>([]);
   const [loading, setLoading] = useState(false);
   const [step, setStep] = useState(0);
   const [error, setError] = useState<{ message: string; upgrade?: boolean } | null>(null);
@@ -46,7 +51,7 @@ export function Composer({
     const res = await fetch("/api/projects", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ prompt, mode, style, aspect, targetSeconds }),
+      body: JSON.stringify({ prompt, mode, style, aspect, targetSeconds, assetIds: photos.map((p) => p.id) }),
     });
     const data = await res.json().catch(() => ({}));
     if (!res.ok) {
@@ -82,12 +87,17 @@ export function Composer({
             maxLength={5000}
             className="input resize-y text-base leading-relaxed"
             placeholder={
-              mode === "idea"
+              photos.length && mode === "idea"
+                ? "What should the video say about your photos? e.g. “Our weekend in Goa: best beaches and food”"
+                : mode === "idea"
                 ? "What's your video about? e.g. “5 psychology tricks that make people like you instantly”"
                 : "Paste your script. We'll split it into scenes, find visuals, and time the captions."
             }
           />
-          {mode === "idea" && !prompt && (
+          <div className="mt-3">
+            <PhotoPicker photos={photos} onChange={setPhotos} max={MAX_PHOTOS} />
+          </div>
+          {mode === "idea" && !prompt && !photos.length && (
             <div className="mt-3 flex flex-wrap gap-2">
               {SAMPLES.map((s) => (
                 <button

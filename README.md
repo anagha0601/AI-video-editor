@@ -19,6 +19,7 @@ Video rendering runs **in the user's browser** (`src/lib/renderer.ts`), so you d
 ## Features
 
 - **Core loop:** idea or script → AI storyboard → live preview → edit → export MP4
+- **Your own photos:** upload up to 12 photos with your idea. Gemini and Claude look at them and write the script around what they show, then assign each photo to the best scene. Photos are resized in the browser and stored in the database, so no extra storage service is needed
 - **Editor:** edit on-screen text and voiceover lines, reorder, add, or delete scenes, swap visuals, autosave
 - **Library:** search (title, prompt, caption), filter by status and style, sort, delete
 - **Post copy:** an AI-written caption and hashtags you can copy in one click

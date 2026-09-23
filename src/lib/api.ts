@@ -30,6 +30,7 @@ export function serializeProject(p: NonNullable<Awaited<ReturnType<typeof getOwn
     ...p,
     scenes: JSON.parse(p.scenes) as Scene[],
     hashtags: p.hashtags ? p.hashtags.split(" ") : [],
+    assetIds: JSON.parse(p.assetIds) as string[],
     createdAt: p.createdAt.toISOString(),
     updatedAt: p.updatedAt.toISOString(),
   };

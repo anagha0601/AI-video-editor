@@ -32,6 +32,7 @@ const PatchBody = z.object({
   hashtags: z.array(z.string()).max(30).optional(),
   status: z.enum(["draft", "ready", "exported"]).optional(),
   scenes: z.array(SceneSchema).min(1).max(20).optional(),
+  assetIds: z.array(z.string()).max(40).optional(),
 });
 
 export async function PATCH(req: Request, { params }: Ctx) {
@@ -41,7 +42,7 @@ export async function PATCH(req: Request, { params }: Ctx) {
     if (!project) return jsonError("Not found", 404);
     const parsed = PatchBody.safeParse(await req.json().catch(() => null));
     if (!parsed.success) return jsonError(parsed.error.issues[0]?.message ?? "Invalid input");
-    const { scenes, hashtags, ...rest } = parsed.data;
+    const { scenes, hashtags, assetIds, ...rest } = parsed.data;
 
     // Keep each scene's timing in sync with its narration after edits.
     const normalized = scenes?.map((s) => ({ ...s, durationSec: estimateDuration(s.narration) }));
@@ -49,6 +50,7 @@ export async function PATCH(req: Request, { params }: Ctx) {
       where: { id },
       data: {
         ...rest,
+        ...(assetIds ? { assetIds: JSON.stringify(assetIds) } : {}),
         ...(hashtags ? { hashtags: hashtags.map((h) => h.replace(/^#/, "")).join(" ") } : {}),
         ...(normalized
           ? {

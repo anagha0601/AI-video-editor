@@ -19,6 +19,7 @@ model User {
   stripeSubId      String?
   createdAt        DateTime  @default(now())
   projects         Project[]
+  assets           Asset[]
 }
 
 model Project {
@@ -37,8 +38,24 @@ model Project {
   hashtags    String   @default("") // space-separated
   scenes      String   @default("[]") // JSON: Scene[]
   durationSec Int      @default(0)
+  assetIds    String   @default("[]") // JSON: ids of the user photos attached to this video
   createdAt   DateTime @default(now())
   updatedAt   DateTime @updatedAt
+
+  @@index([userId, createdAt])
+}
+
+// User-uploaded photos. Stored in the DB (resized client-side to ~1280px JPEG)
+// so they survive serverless deploys without extra object storage.
+model Asset {
+  id        String   @id @default(cuid())
+  userId    String
+  user      User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  mime      String
+  width     Int
+  height    Int
+  data      Bytes
+  createdAt DateTime @default(now())
 
   @@index([userId, createdAt])
 }

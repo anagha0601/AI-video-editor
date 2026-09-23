@@ -21,24 +21,33 @@ const StoryboardSchema = z.object({
         onScreen: z.string().describe("Bold on-screen headline, 2-6 words"),
         visualQuery: z.string().describe("2-4 word stock-footage search query, concrete and visual"),
         emoji: z.string().describe("A single emoji that fits the scene"),
+        photoIndex: z
+          .number()
+          .int()
+          .describe("1-based number of the user photo to show in this scene, or 0 if the user attached no photos"),
       }),
     )
     .describe("4-8 scenes; the first scene narration IS the hook"),
 });
+
+export type StoryboardScene = Scene & { photoIndex?: number };
 
 export type Storyboard = {
   title: string;
   hook: string;
   caption: string;
   hashtags: string[];
-  scenes: Scene[];
+  scenes: StoryboardScene[];
 };
+
+export type Photo = { mime: string; base64: string };
 
 export type GenerateInput = {
   prompt: string;
   mode: "idea" | "script";
   style: VideoStyle;
   targetSeconds: number;
+  photos?: Photo[]; // user photos, in upload order
 };
 
 const PALETTES: [string, string][] = [
@@ -52,7 +61,9 @@ const PALETTES: [string, string][] = [
   ["#14b8a6", "#6366f1"],
 ];
 
-function toScenes(raw: { narration: string; onScreen: string; visualQuery: string; emoji?: string }[]): Scene[] {
+function toScenes(
+  raw: { narration: string; onScreen: string; visualQuery: string; emoji?: string; photoIndex?: number }[],
+): StoryboardScene[] {
   return raw.map((s, i) => ({
     id: crypto.randomUUID(),
     narration: s.narration.trim(),
@@ -63,7 +74,31 @@ function toScenes(raw: { narration: string; onScreen: string; visualQuery: strin
     palette: PALETTES[i % PALETTES.length],
     mediaUrl: null,
     credit: null,
+    photoIndex: s.photoIndex,
   }));
+}
+
+// Makes sure every scene points at a real photo when photos exist, and that every
+// photo is used at least once (models occasionally skip or repeat one).
+function assignPhotos(scenes: StoryboardScene[], count: number): StoryboardScene[] {
+  if (!count) return scenes.map((s) => ({ ...s, photoIndex: 0 }));
+  const valid = (n?: number): n is number => typeof n === "number" && n >= 1 && n <= count;
+  const used = new Set<number>();
+  const firstPass = scenes.map((s) => {
+    if (valid(s.photoIndex) && !used.has(s.photoIndex)) {
+      used.add(s.photoIndex);
+      return s;
+    }
+    return { ...s, photoIndex: undefined };
+  });
+  const unused = Array.from({ length: count }, (_, i) => i + 1).filter((n) => !used.has(n));
+  let cycle = 0;
+  return firstPass.map((s, i) => {
+    if (valid(s.photoIndex)) return s;
+    const fromAi = scenes[i].photoIndex;
+    const next = unused.shift() ?? (valid(fromAi) ? fromAi : (cycle++ % count) + 1);
+    return { ...s, photoIndex: next };
+  });
 }
 
 type Provider = "groq" | "gemini" | "claude" | "demo";
@@ -92,11 +127,21 @@ Rules:
 - visualQuery must be something a stock library would actually have (e.g. "city night traffic", "woman running sunrise"), never abstract words.
 - If the user provides a full script, keep their wording and meaning; only split it into scenes and tighten where needed.`;
 
-function userPrompt(input: GenerateInput) {
+function photoInstructions(count: number, canSee: boolean) {
+  if (!count) return "";
+  const plural = count > 1 ? "s" : "";
+  const see = canSee
+    ? `The user attached ${count} photo${plural}, shown above in order as Photo 1..${count}. Build the video around them: write narration that matches what is actually in each photo, and never contradict what the photos show.`
+    : `The user attached ${count} photo${plural} (you can't see them). Use them in upload order.`;
+  return `\n\n${see}\nSet photoIndex on every scene to the photo it should show. Use every photo at least once. Make at least ${count} scenes (at most ${Math.max(8, count)}).`;
+}
+
+function userPrompt(input: GenerateInput, canSeePhotos = false) {
   const wordBudget = Math.round(input.targetSeconds * 2.6);
-  return input.mode === "script"
+  const photos = photoInstructions(input.photos?.length ?? 0, canSeePhotos);
+  return (input.mode === "script"
     ? `Here is my script. Split it into scenes for a ${input.style} short video.\n\n<script>\n${input.prompt}\n</script>`
-    : `Create a ${input.style} short video (~${input.targetSeconds} seconds, about ${wordBudget} spoken words total) about:\n\n<idea>\n${input.prompt}\n</idea>`;
+    : `Create a ${input.style} short video (~${input.targetSeconds} seconds, about ${wordBudget} spoken words total) about:\n\n<idea>\n${input.prompt}\n</idea>`) + photos;
 }
 
 function toStoryboard(parsed: z.infer<typeof StoryboardSchema>): Storyboard {
@@ -111,19 +156,32 @@ function toStoryboard(parsed: z.infer<typeof StoryboardSchema>): Storyboard {
 }
 
 export async function generateStoryboard(input: GenerateInput): Promise<Storyboard> {
+  const board = await generateRaw(input);
+  return { ...board, scenes: assignPhotos(board.scenes, input.photos?.length ?? 0) };
+}
+
+async function generateRaw(input: GenerateInput): Promise<Storyboard> {
   const p = provider();
   if (p === "demo") return demoStoryboard(input);
   if (p === "groq") return generateWithGroq(input);
   if (p === "gemini") return generateWithGemini(input);
 
   const client = new Anthropic();
-  const user = userPrompt(input);
+  const user = userPrompt(input, true);
+  const images = (input.photos ?? []).map((ph) => ({
+    type: "image" as const,
+    source: {
+      type: "base64" as const,
+      media_type: ph.mime as "image/jpeg" | "image/png" | "image/webp",
+      data: ph.base64,
+    },
+  }));
 
   const response = await client.beta.messages.parse({
     model: MODEL,
     max_tokens: 16000,
     system: SYSTEM,
-    messages: [{ role: "user", content: user }],
+    messages: [{ role: "user", content: [...images, { type: "text", text: user }] }],
     output_config: { effort: "medium", format: betaZodOutputFormat(StoryboardSchema) },
     // Server-side refusal fallback: if the primary model declines, the API retries on a recommended model.
     betas: ["server-side-fallback-2026-07-01"],
@@ -202,7 +260,15 @@ async function generateWithGemini(input: GenerateInput): Promise<Storyboard> {
   try {
     const res = await withRetry(() => ai.models.generateContent({
       model: process.env.GEMINI_MODEL || "gemini-flash-lite-latest",
-      contents: userPrompt(input),
+      contents: [
+        {
+          role: "user",
+          parts: [
+            ...(input.photos ?? []).map((ph) => ({ inlineData: { mimeType: ph.mime, data: ph.base64 } })),
+            { text: userPrompt(input, true) },
+          ],
+        },
+      ],
       config: {
         systemInstruction: SYSTEM,
         responseMimeType: "application/json",
@@ -254,13 +320,16 @@ function demoStoryboard(input: GenerateInput): Storyboard {
       .split(/\s+/)
       .filter((w) => w.length > 3);
   const emojis = ["🔥", "💡", "🚀", "✅", "🎯", "⚡", "📈", "✨"];
-  const scenes = merged.slice(0, 8).map((narration, i) => {
+  const photoCount = input.photos?.length ?? 0;
+  while (merged.length < Math.min(photoCount, 12)) merged.push("And here is another moment worth seeing.");
+  const scenes = merged.slice(0, Math.max(8, photoCount)).map((narration, i) => {
     const w = words(narration);
     return {
       narration,
       onScreen: w.slice(0, 4).join(" ") || "Watch this",
       visualQuery: w.slice(-2).join(" ") || "abstract light",
       emoji: emojis[i % emojis.length],
+      photoIndex: 0,
     };
   });
   const title = text.split(/\s+/).slice(0, 8).join(" ");

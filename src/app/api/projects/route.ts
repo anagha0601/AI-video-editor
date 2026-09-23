@@ -3,10 +3,9 @@ import { z } from "zod";
 import { db } from "@/lib/db";
 import { jsonError, serializeProject, withUser } from "@/lib/api";
 import { generateStoryboard } from "@/lib/ai";
-import { findStockImage } from "@/lib/media";
+import { attachVisuals, loadPhotos, MAX_PHOTOS } from "@/lib/storyboard";
 import { canCreate } from "@/lib/usage";
 import { isPro } from "@/lib/plans";
-import type { Scene } from "@/lib/types";
 
 export const maxDuration = 60;
 
@@ -40,6 +39,7 @@ const CreateBody = z.object({
   style: z.enum(["educational", "storytelling", "promo", "motivational", "listicle"]).default("educational"),
   aspect: z.enum(["9:16", "1:1", "16:9"]).default("9:16"),
   targetSeconds: z.number().int().min(15).max(90).default(30),
+  assetIds: z.array(z.string()).max(MAX_PHOTOS, `Up to ${MAX_PHOTOS} photos per video`).default([]),
 });
 
 export async function POST(req: Request) {
@@ -58,13 +58,9 @@ export async function POST(req: Request) {
       });
     }
 
-    const board = await generateStoryboard(input);
-    const scenes: Scene[] = await Promise.all(
-      board.scenes.map(async (s) => {
-        const img = await findStockImage(s.visualQuery, input.aspect);
-        return { ...s, mediaUrl: img?.url ?? null, credit: img?.credit ?? null };
-      }),
-    );
+    const { ids: photoIds, photos } = await loadPhotos(user.id, input.assetIds);
+    const board = await generateStoryboard({ ...input, photos });
+    const scenes = await attachVisuals(board.scenes, photoIds, input.aspect);
 
     const project = await db.project.create({
       data: {
@@ -79,6 +75,7 @@ export async function POST(req: Request) {
         caption: board.caption,
         hashtags: board.hashtags.join(" "),
         scenes: JSON.stringify(scenes),
+        assetIds: JSON.stringify(photoIds),
         durationSec: Math.round(scenes.reduce((a, s) => a + s.durationSec, 0)),
       },
     });

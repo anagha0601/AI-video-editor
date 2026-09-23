@@ -2,7 +2,7 @@ import { NextResponse } from "next/server";
 import { db } from "@/lib/db";
 import { getOwnedProject, jsonError, serializeProject, withUser } from "@/lib/api";
 import { generateStoryboard } from "@/lib/ai";
-import { findStockImage } from "@/lib/media";
+import { attachVisuals, loadPhotos } from "@/lib/storyboard";
 import type { Scene, VideoStyle } from "@/lib/types";
 
 export const maxDuration = 60;
@@ -15,18 +15,15 @@ export async function POST(_req: Request, { params }: { params: Promise<{ id: st
     if (!project) return jsonError("Not found", 404);
 
     const current = JSON.parse(project.scenes) as Scene[];
+    const { ids: photoIds, photos } = await loadPhotos(user.id, JSON.parse(project.assetIds) as string[]);
     const board = await generateStoryboard({
+      photos,
       prompt: project.prompt,
       mode: project.mode as "idea" | "script",
       style: project.style as VideoStyle,
       targetSeconds: Math.max(15, Math.min(90, project.durationSec || 30)),
     });
-    const scenes = await Promise.all(
-      board.scenes.map(async (s) => {
-        const img = await findStockImage(s.visualQuery, project.aspect);
-        return { ...s, mediaUrl: img?.url ?? null, credit: img?.credit ?? null };
-      }),
-    );
+    const scenes = await attachVisuals(board.scenes, photoIds, project.aspect);
 
     const updated = await db.project.update({
       where: { id },

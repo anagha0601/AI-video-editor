@@ -7,6 +7,7 @@ import type { ProjectDTO } from "@/lib/api";
 import { ASPECTS, type Scene } from "@/lib/types";
 import { estimateDuration } from "@/lib/timing";
 import { exportVideo } from "@/lib/renderer";
+import { uploadPhoto } from "@/lib/upload";
 import { Player, type PlayerHandle } from "./Player";
 
 type Props = { initial: ProjectDTO; pro: boolean; stockEnabled: boolean; voiceEnabled: boolean };
@@ -115,6 +116,23 @@ export function Editor({ initial, pro, stockEnabled, voiceEnabled }: Props) {
     setBusy(null);
     if (!res.ok) return setError({ message: data.error ?? "Couldn't find a visual" });
     updateScene(i, { mediaUrl: data.url, credit: data.credit });
+  }
+
+  async function uploadForScene(i: number, file: File | undefined) {
+    if (!file) return;
+    setBusy(`upload-${i}`);
+    setError(null);
+    try {
+      const photo = await uploadPhoto(file);
+      const assetIds = [...project.assetIds, photo.id];
+      setProject((p) => ({ ...p, assetIds }));
+      queue({ assetIds });
+      updateScene(i, { mediaUrl: photo.url, credit: null });
+    } catch (e) {
+      setError({ message: e instanceof Error ? e.message : "Upload failed" });
+    } finally {
+      setBusy(null);
+    }
   }
 
   async function regenerate() {
@@ -351,6 +369,40 @@ export function Editor({ initial, pro, stockEnabled, voiceEnabled }: Props) {
                         Clear
                       </button>
                     )}
+                  </div>
+                  <div className="mt-2 flex flex-wrap items-center gap-1.5">
+                    {project.assetIds.map((id, k) => {
+                      const url = `/api/assets/${id}`;
+                      return (
+                        <button
+                          key={id}
+                          onClick={() => updateScene(i, { mediaUrl: url, credit: null })}
+                          className={`h-10 w-10 overflow-hidden rounded-md ring-2 transition ${
+                            s.mediaUrl === url ? "ring-brand-500" : "ring-transparent opacity-70 hover:opacity-100"
+                          }`}
+                          title={`Use photo ${k + 1}`}
+                        >
+                          {/* eslint-disable-next-line @next/next/no-img-element */}
+                          <img src={url} alt="" className="h-full w-full object-cover" />
+                        </button>
+                      );
+                    })}
+                    <label
+                      className={`grid h-10 cursor-pointer place-items-center rounded-md border border-dashed border-white/15 px-2.5 text-xs text-zinc-400 hover:border-brand-500 hover:text-white ${
+                        busy === `upload-${i}` ? "pointer-events-none opacity-50" : ""
+                      }`}
+                    >
+                      {busy === `upload-${i}` ? "Uploading…" : "↑ Upload photo"}
+                      <input
+                        type="file"
+                        accept="image/jpeg,image/png,image/webp"
+                        hidden
+                        onChange={(e) => {
+                          uploadForScene(i, e.target.files?.[0]);
+                          e.target.value = "";
+                        }}
+                      />
+                    </label>
                   </div>
                   {s.credit && <p className="mt-1.5 text-[11px] text-zinc-600">{s.credit}</p>}
                 </li>
