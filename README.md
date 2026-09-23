@@ -2,12 +2,12 @@
 
 Turn any idea or script into a ready-to-post short video. The AI writes a hook-first script, splits it into scenes, picks visuals, adds animated captions and an optional AI voiceover, and exports an MP4 for TikTok, Reels, and Shorts.
 
-**Stack:** Next.js 15 (App Router) · Tailwind CSS v4 · Prisma (SQLite locally, Postgres in production) · Gemini or Claude API · Stripe (test mode) · Pexels (optional) · ElevenLabs (optional)
+**Stack:** Next.js 15 (App Router) · Tailwind CSS v4 · Prisma (SQLite locally, Postgres in production) · Groq, Gemini, or Claude API · Stripe (test mode) · Pexels (optional) · ElevenLabs (optional)
 
 ## How it works
 
 ```
-idea / script ──► POST /api/projects ──► Gemini or Claude (structured storyboard JSON)
+idea / script ──► POST /api/projects ──► Groq, Gemini, or Claude (structured storyboard JSON)
                                      └─► Pexels image search per scene
                           saved to DB as a Project with Scenes
 editor (browser) ──► <canvas> renderer: Ken Burns visuals, headline, karaoke captions
@@ -28,7 +28,7 @@ Video rendering runs **in the user's browser** (`src/lib/renderer.ts`), so you d
 
 | Missing key | What happens |
 |---|---|
-| `GEMINI_API_KEY` / `ANTHROPIC_API_KEY` | A template-based "demo" storyboard is used instead of the AI |
+| `GROQ_API_KEY` / `GEMINI_API_KEY` / `ANTHROPIC_API_KEY` | A template-based "demo" storyboard is used instead of the AI |
 | `PEXELS_API_KEY` | Scenes get animated gradient backgrounds and an emoji |
 | `ELEVENLABS_API_KEY` | Preview uses the browser's built-in voice; exports have captions and no voice |
 | `STRIPE_SECRET_KEY` | The upgrade button shows a "not configured" message |
@@ -44,7 +44,7 @@ npx prisma db push            # creates prisma/dev.db
 npm run dev                   # http://localhost:3000
 ```
 
-Run `npm run check:ai` to confirm your Gemini key works before using the app.
+Run `npm run check:ai` to confirm your AI key works before using the app.
 
 ## Environment variables
 
@@ -53,9 +53,11 @@ Run `npm run check:ai` to confirm your Gemini key works before using the app.
 | `DATABASE_URL` | yes | `file:./dev.db` locally; a Postgres URL in production |
 | `AUTH_SECRET` | yes | Long random string used to sign session cookies (`openssl rand -base64 32`) |
 | `APP_URL` | yes | Public base URL, e.g. `http://localhost:3000`. Used for Stripe redirects |
-| `GEMINI_API_KEY` | recommended | Free key from aistudio.google.com/apikey. Enables AI scripts. Takes priority over Claude |
-| `GEMINI_MODEL` | no | Default `gemini-flash-latest` |
-| `ANTHROPIC_API_KEY` | no | Use Claude instead (only when `GEMINI_API_KEY` is empty) |
+| `GROQ_API_KEY` | recommended | Free key from console.groq.com/keys. Enables AI scripts. Takes priority over Gemini and Claude |
+| `GROQ_MODEL` | no | Default `llama-3.3-70b-versatile` |
+| `GEMINI_API_KEY` | no | Use Gemini instead (only when `GROQ_API_KEY` is empty) |
+| `GEMINI_MODEL` | no | Default `gemini-flash-lite-latest` |
+| `ANTHROPIC_API_KEY` | no | Use Claude instead (only when both keys above are empty) |
 | `ANTHROPIC_MODEL` | no | Overrides the Claude model (default `claude-opus-5`) |
 | `PEXELS_API_KEY` | recommended | Free key from pexels.com/api for stock visuals |
 | `ELEVENLABS_API_KEY` | no | Enables AI voiceover baked into Pro exports |
@@ -116,7 +118,7 @@ src/
     api/                      auth, projects, media proxy, tts, stripe
   components/                 UI (Editor, Player, Composer, ProjectLibrary…)
   lib/
-    ai.ts                     Gemini/Claude storyboard generation (+ demo fallback)
+    ai.ts                     Groq/Gemini/Claude storyboard generation (+ demo fallback)
     renderer.ts               canvas video engine + MediaRecorder export
     auth.ts, stripe.ts, media.ts, usage.ts, plans.ts
 prisma/schema.prisma

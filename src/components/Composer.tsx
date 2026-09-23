@@ -176,7 +176,7 @@ export function Composer({
 
         <div className="flex flex-col-reverse items-center justify-between gap-3 sm:flex-row">
           <p className="text-xs text-zinc-500">
-            {aiProvider !== "demo" ? `AI script by ${aiProvider}` : "Demo mode: add GEMINI_API_KEY for AI scripts"} ·{" "}
+            {aiProvider !== "demo" ? `AI script by ${aiProvider}` : "Demo mode: add GROQ_API_KEY for AI scripts"} ·{" "}
             {stockEnabled ? "Stock visuals by Pexels" : "Generated visuals"}
           </p>
           <button onClick={generate} disabled={loading || prompt.trim().length < 3} className="btn-primary w-full px-6 py-3 sm:w-auto">

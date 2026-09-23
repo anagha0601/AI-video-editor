@@ -2,6 +2,7 @@ import "server-only";
 import Anthropic from "@anthropic-ai/sdk";
 import { betaZodOutputFormat } from "@anthropic-ai/sdk/helpers/beta/zod";
 import { ApiError, GoogleGenAI } from "@google/genai";
+import Groq from "groq-sdk";
 import { z } from "zod/v4";
 import type { Scene, VideoStyle } from "./types";
 import { estimateDuration } from "./timing";
@@ -65,9 +66,10 @@ function toScenes(raw: { narration: string; onScreen: string; visualQuery: strin
   }));
 }
 
-type Provider = "gemini" | "claude" | "demo";
+type Provider = "groq" | "gemini" | "claude" | "demo";
 
 function provider(): Provider {
+  if (process.env.GROQ_API_KEY) return "groq";
   if (process.env.GEMINI_API_KEY) return "gemini";
   if (process.env.ANTHROPIC_API_KEY || process.env.ANTHROPIC_AUTH_TOKEN) return "claude";
   return "demo";
@@ -78,7 +80,7 @@ export function aiEnabled() {
 }
 
 export function aiProviderLabel() {
-  return { gemini: "Gemini", claude: "Claude", demo: "demo" }[provider()];
+  return { groq: "Groq", gemini: "Gemini", claude: "Claude", demo: "demo" }[provider()];
 }
 
 const SYSTEM = `You are a short-form video producer who writes viral TikTok / Reels / YouTube Shorts.
@@ -111,6 +113,7 @@ function toStoryboard(parsed: z.infer<typeof StoryboardSchema>): Storyboard {
 export async function generateStoryboard(input: GenerateInput): Promise<Storyboard> {
   const p = provider();
   if (p === "demo") return demoStoryboard(input);
+  if (p === "groq") return generateWithGroq(input);
   if (p === "gemini") return generateWithGemini(input);
 
   const client = new Anthropic();
@@ -134,6 +137,62 @@ export async function generateStoryboard(input: GenerateInput): Promise<Storyboa
   return toStoryboard(response.parsed_output);
 }
 
+// Free tiers often return transient 5xx "overloaded" errors; retry those twice with backoff.
+async function withRetry<T>(fn: () => Promise<T>): Promise<T> {
+  for (let attempt = 0; ; attempt++) {
+    try {
+      return await fn();
+    } catch (err) {
+      const status = (err as { status?: number }).status ?? 0;
+      if (status < 500 || attempt >= 2) throw err;
+      await new Promise((r) => setTimeout(r, 1500 * (attempt + 1)));
+    }
+  }
+}
+
+function parseStoryboardJson(text: string | null | undefined, name: string): Storyboard {
+  if (!text) throw new Error(`${name} returned an empty response. Please try again.`);
+  let json: unknown;
+  try {
+    json = JSON.parse(text);
+  } catch {
+    throw new Error(`${name} returned malformed JSON. Please try again.`);
+  }
+  const parsed = StoryboardSchema.safeParse(json);
+  if (!parsed.success) throw new Error(`${name}'s storyboard didn't match the expected format. Please try again.`);
+  return toStoryboard(parsed.data);
+}
+
+// Groq (fast, generous free tier). JSON mode with the schema in the prompt, validated with zod.
+async function generateWithGroq(input: GenerateInput): Promise<Storyboard> {
+  const groq = new Groq({ apiKey: process.env.GROQ_API_KEY });
+  const schema = JSON.stringify(z.toJSONSchema(StoryboardSchema));
+  try {
+    const res = await withRetry(() => groq.chat.completions.create({
+      model: process.env.GROQ_MODEL || "llama-3.3-70b-versatile",
+      messages: [
+        {
+          role: "system",
+          content: `${SYSTEM}\n\nRespond with only a JSON object that matches this JSON Schema:\n${schema}`,
+        },
+        { role: "user", content: userPrompt(input) },
+      ],
+      response_format: { type: "json_object" },
+      temperature: 0.8,
+    }));
+    return parseStoryboardJson(res.choices[0]?.message?.content, "Groq");
+  } catch (err) {
+    if (err instanceof Groq.APIError) {
+      if (err.status === 429) throw new Error("Groq free-tier rate limit hit. Wait a minute and try again.");
+      if ((err.status ?? 0) >= 500) throw new Error("Groq is overloaded right now. Please try again in a moment.");
+      if (err.status === 401) throw new Error("Groq rejected the API key. Check GROQ_API_KEY in .env.");
+      if (err.status === 404) throw new Error("Groq model not found. Run `npm run check:ai` to see available models.");
+      if (err.status === 400) throw new Error(`Groq rejected the request: ${err.message}`);
+    }
+    throw err;
+  }
+}
+
 // Google Gemini (works on the free tier). JSON mode + schema, validated with zod.
 async function generateWithGemini(input: GenerateInput): Promise<Storyboard> {
   const ai = new GoogleGenAI({ apiKey: process.env.GEMINI_API_KEY });
@@ -141,34 +200,26 @@ async function generateWithGemini(input: GenerateInput): Promise<Storyboard> {
   delete schema.$schema; // Gemini rejects the meta-schema key
   let text: string | undefined;
   try {
-    const res = await ai.models.generateContent({
-      model: process.env.GEMINI_MODEL || "gemini-flash-latest",
+    const res = await withRetry(() => ai.models.generateContent({
+      model: process.env.GEMINI_MODEL || "gemini-flash-lite-latest",
       contents: userPrompt(input),
       config: {
         systemInstruction: SYSTEM,
         responseMimeType: "application/json",
         responseJsonSchema: schema,
       },
-    });
+    }));
     text = res.text;
   } catch (err) {
     if (err instanceof ApiError) {
       if (err.status === 429) throw new Error("Gemini free-tier rate limit hit. Wait a minute and try again.");
+      if (err.status >= 500) throw new Error("Gemini is overloaded right now. Please try again in a moment.");
       if (err.status === 400 || err.status === 403) throw new Error(`Gemini rejected the request: ${err.message}`);
       if (err.status === 404) throw new Error("Gemini model not found. Set GEMINI_MODEL to a model your key can use.");
     }
     throw err;
   }
-  if (!text) throw new Error("Gemini returned an empty response. Please try again.");
-  let json: unknown;
-  try {
-    json = JSON.parse(text);
-  } catch {
-    throw new Error("Gemini returned malformed JSON. Please try again.");
-  }
-  const parsed = StoryboardSchema.safeParse(json);
-  if (!parsed.success) throw new Error("Gemini's storyboard didn't match the expected format. Please try again.");
-  return toStoryboard(parsed.data);
+  return parseStoryboardJson(text, "Gemini");
 }
 
 // Offline fallback so the whole product loop works without an API key.
