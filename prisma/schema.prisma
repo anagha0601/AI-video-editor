@@ -1,0 +1,44 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+// SQLite for local dev. For production, switch provider to "postgresql"
+// and point DATABASE_URL at Neon/Supabase/Railway Postgres (see README).
+datasource db {
+  provider = "sqlite"
+  url      = env("DATABASE_URL")
+}
+
+model User {
+  id               String    @id @default(cuid())
+  email            String    @unique
+  passwordHash     String
+  name             String?
+  plan             String    @default("free") // "free" | "pro"
+  stripeCustomerId String?   @unique
+  stripeSubId      String?
+  createdAt        DateTime  @default(now())
+  projects         Project[]
+}
+
+model Project {
+  id          String   @id @default(cuid())
+  userId      String
+  user        User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  title       String
+  prompt      String   // the user's original idea or script
+  mode        String   @default("idea") // "idea" | "script"
+  style       String   @default("educational")
+  aspect      String   @default("9:16") // "9:16" | "1:1" | "16:9"
+  voice       String   @default("default")
+  status      String   @default("draft") // "draft" | "ready" | "exported"
+  hook        String   @default("")
+  caption     String   @default("") // social caption for posting
+  hashtags    String   @default("") // space-separated
+  scenes      String   @default("[]") // JSON: Scene[]
+  durationSec Int      @default(0)
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  @@index([userId, createdAt])
+}
