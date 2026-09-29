@@ -4,7 +4,7 @@ import { maybeBuildFirstCut } from "@/server/firstcut";
 import { HttpError, ownedProject, requireUserId, route, type Ctx } from "@/server/http";
 import { deleteObject } from "@/server/storage";
 
-export const maxDuration = 60;
+export const maxDuration = 300;
 
 /**
  * Status for the processing screen. When the worker has finished transcribing,

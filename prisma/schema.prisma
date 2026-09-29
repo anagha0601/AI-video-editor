@@ -33,6 +33,12 @@ model Project {
   thumbnailUrl  String?
   duration      Float             @default(0)
   isSample      Boolean           @default(false)
+  mode          String            @default("voice") // voice | idea | script (how the voiceover was made)
+  prompt        String? // the idea or script text for idea/script projects
+  // Where scene visuals come from after the user's own media:
+  // auto = library -> stock -> AI images; ai = AI images; stock = library -> stock
+  visualMode    String            @default("auto")
+  assetIds      String[] // photos/videos the user attached to this project (used first)
   buildStartedAt DateTime?
   createdAt     DateTime          @default(now())
   updatedAt     DateTime          @updatedAt

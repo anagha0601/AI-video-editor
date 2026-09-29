@@ -224,7 +224,7 @@ function Thumb({ a }: { a: AssetDTO }) {
       <span className="absolute bottom-1 left-1 flex items-center gap-1 rounded bg-black/60 px-1 text-[10px] text-white">
         <Icon className="size-2.5" />
         {a.duration ? `${a.duration.toFixed(1)}s` : ""}
-        {a.source === "pexels" ? " · Pexels" : ""}
+        {a.source === "pexels" ? " · Pexels" : a.source === "ai" ? " · AI" : ""}
       </span>
     </div>
   );

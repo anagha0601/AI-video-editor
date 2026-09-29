@@ -2,12 +2,12 @@
 
 import { useCallback } from "react";
 import { toast } from "sonner";
-import { timelineDuration } from "@/lib/timeline/derive";
+import { findClip, timelineDuration } from "@/lib/timeline/derive";
 import { newAudioClip, newTextClip, newVisualClip, TEXT_PRESETS } from "@/lib/timeline/factory";
-import { addClip } from "@/lib/timeline/ops";
-import type { AnyClip, TrackKind } from "@/lib/timeline/types";
+import { addClip, updateClip } from "@/lib/timeline/ops";
+import type { AnyClip, TrackKind, VisualClip } from "@/lib/timeline/types";
 import { api } from "@/lib/client/api";
-import type { AssetDTO } from "@/lib/client/upload";
+import { uploadAsset, type AssetDTO } from "@/lib/client/upload";
 import { useEditor } from "./store";
 
 export const DRAG_MIME = "application/x-reelsmith";
@@ -122,4 +122,57 @@ export function useDropHandler() {
   return useCallback((p: DragPayload, trackId: string | null, time: number) => {
     addPayload(p, trackId, time).catch((err) => toast.error((err as Error).message));
   }, []);
+}
+
+/** Swap the media of a visual clip, keeping its timing, transition and effects. */
+export function replaceClipMedia(clipId: string, asset: AssetDTO) {
+  const s = useEditor.getState();
+  const hit = findClip(s.timeline, clipId);
+  if (!hit || hit.clip.type === "text" || hit.clip.type === "audio") return false;
+  if (asset.type !== "video" && asset.type !== "image") {
+    toast.error("Pick a video or photo");
+    return false;
+  }
+  const c = hit.clip as VisualClip;
+  const patch: Partial<VisualClip> = {
+    type: asset.type,
+    assetId: asset.id,
+    src: asset.url,
+    thumb: asset.thumbUrl ?? asset.url,
+    srcDuration: asset.duration,
+    srcWidth: asset.width,
+    srcHeight: asset.height,
+    hasAudio: asset.meta?.hasAudio ?? asset.type === "video",
+    muted: asset.source === "pexels" ? true : c.muted,
+    in: 0,
+    colors: null,
+    keywords: asset.tags,
+    name: c.scene ? `Scene ${c.scene} · ${asset.source === "ai" ? "AI" : asset.name}` : asset.name,
+    kenBurns: asset.type === "image" ? (c.kenBurns ?? { direction: "in", amount: 0.12 }) : null,
+  };
+  if (asset.type === "video" && asset.duration) patch.duration = Math.min(c.duration, asset.duration);
+  s.commit(updateClip(s.timeline, c.id, patch as Partial<AnyClip>), "Replace media");
+  return true;
+}
+
+/** Files dropped from the computer: upload to the library, then place on the timeline. */
+export async function uploadAndAdd(files: FileList | File[], trackId: string | null, time: number) {
+  const list = [...files].filter((f) => /^(image|video|audio)\//.test(f.type));
+  if (!list.length) return toast.error("Drop photos, videos or audio files");
+  const id = toast.loading(`Uploading ${list.length} file${list.length > 1 ? "s" : ""}…`);
+  let t = time;
+  try {
+    for (const f of list) {
+      const asset = await uploadAsset(f, "auto");
+      const s = useEditor.getState();
+      s.setAssets([asset, ...Object.values(s.assets)]);
+      await addPayload({ kind: "asset", asset }, trackId, t);
+      const added = useEditor.getState().selection[0];
+      const clip = added ? findClip(useEditor.getState().timeline, added)?.clip : null;
+      if (clip) t = clip.start + clip.duration; // place several files back to back
+    }
+    toast.success(`Added ${list.length} file${list.length > 1 ? "s" : ""}`, { id });
+  } catch (e) {
+    toast.error((e as Error).message, { id });
+  }
 }

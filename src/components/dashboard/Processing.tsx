@@ -15,9 +15,9 @@ interface Status {
 }
 
 const STEPS = [
-  { id: "upload", label: "Voice uploaded" },
+  { id: "upload", label: "Voiceover ready" },
   { id: "transcribe", label: "Transcribing with word timings" },
-  { id: "build", label: "Splitting scenes & matching visuals" },
+  { id: "build", label: "Splitting scenes & creating visuals" },
   { id: "open", label: "Opening the editor" },
 ];
 

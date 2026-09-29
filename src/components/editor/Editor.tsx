@@ -13,6 +13,7 @@ import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip
 import { cn } from "@/lib/utils";
 import { useEditor } from "./store";
 import { useAutosave, useShortcuts } from "./hooks";
+import { uploadAndAdd } from "./dnd";
 import { Player } from "./preview/Player";
 import { Timeline } from "./timeline/Timeline";
 import { Inspector } from "./panels/Inspector";
@@ -59,6 +60,7 @@ function EditorInner() {
   const panel = useEditor((s) => s.panel);
   const setPanel = useEditor((s) => s.setPanel);
   const selection = useEditor((s) => s.selection);
+  const [fileOver, setFileOver] = useState(false);
 
   // On narrow screens the inspector lives in the left panel; jump to it on selection.
   useEffect(() => {
@@ -94,8 +96,25 @@ function EditorInner() {
           {panel === "ai" && <AiPanel />}
           {panel === "inspect" && <Inspector />}
         </aside>
-        <main className="min-w-0 flex-1 bg-[radial-gradient(ellipse_at_center,rgba(124,58,237,0.08),transparent_70%)] p-3">
+        <main
+          className={cn("relative min-w-0 flex-1 bg-[radial-gradient(ellipse_at_center,rgba(124,58,237,0.08),transparent_70%)] p-3", fileOver && "ring-2 ring-primary ring-inset")}
+          onDragOver={(e) => {
+            if (!e.dataTransfer.types.includes("Files")) return;
+            e.preventDefault();
+            setFileOver(true);
+          }}
+          onDragLeave={() => setFileOver(false)}
+          onDrop={(e) => {
+            setFileOver(false);
+            if (!e.dataTransfer.files.length) return;
+            e.preventDefault();
+            uploadAndAdd(e.dataTransfer.files, null, useEditor.getState().playhead);
+          }}
+        >
           <Player />
+          {fileOver && (
+            <div className="pointer-events-none absolute inset-0 flex items-center justify-center bg-black/50 text-sm font-medium">Drop to add at the playhead</div>
+          )}
         </main>
         <aside className="hidden w-80 shrink-0 overflow-y-auto border-l xl:block">
           <Inspector />

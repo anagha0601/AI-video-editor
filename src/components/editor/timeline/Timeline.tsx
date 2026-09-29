@@ -36,7 +36,7 @@ import { useEditor } from "../store";
 import { formatTime } from "../format";
 import { cachedCaptionLines } from "../preview/draw";
 import { loadPeaks } from "./peaks";
-import { DRAG_MIME, useDropHandler, type DragPayload } from "../dnd";
+import { DRAG_MIME, uploadAndAdd, useDropHandler, type DragPayload } from "../dnd";
 
 const HEADER_W = 132;
 const RULER_H = 24;
@@ -317,18 +317,28 @@ function TrackRow({
         className={cn("relative flex-1", over && "bg-primary/10", track.hidden && "opacity-50", track.locked && "bg-[repeating-linear-gradient(45deg,transparent,transparent_6px,rgba(255,255,255,0.03)_6px,rgba(255,255,255,0.03)_12px)]")}
         onPointerDown={onLaneDown}
         onDragOver={(e) => {
-          if (!e.dataTransfer.types.includes(DRAG_MIME) || track.kind === "captions") return;
+          const types = e.dataTransfer.types;
+          if ((!types.includes(DRAG_MIME) && !types.includes("Files")) || track.kind === "captions") return;
           e.preventDefault();
+          e.stopPropagation();
           setOver(true);
         }}
         onDragLeave={() => setOver(false)}
         onDrop={(e) => {
           setOver(false);
+          const rect = e.currentTarget.getBoundingClientRect();
+          const time = Math.max(0, (e.clientX - rect.left) / zoom);
+          if (e.dataTransfer.files.length) {
+            e.preventDefault();
+            e.stopPropagation();
+            uploadAndAdd(e.dataTransfer.files, track.id, time);
+            return;
+          }
           const raw = e.dataTransfer.getData(DRAG_MIME);
           if (!raw) return;
           e.preventDefault();
-          const rect = e.currentTarget.getBoundingClientRect();
-          onDrop(JSON.parse(raw) as DragPayload, track.id, Math.max(0, (e.clientX - rect.left) / zoom));
+          e.stopPropagation();
+          onDrop(JSON.parse(raw) as DragPayload, track.id, time);
         }}
       >
         {track.kind === "captions" ? (

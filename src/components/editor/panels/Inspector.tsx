@@ -1,8 +1,11 @@
 "use client";
 
-import { useMemo } from "react";
-import { Film, ImageIcon, Music, Palette, Plus, RefreshCw, RotateCcw, Trash2, Type, X } from "lucide-react";
-import { adjacentPrev, clipEnd, findClip, keyframeGain } from "@/lib/timeline/derive";
+import { useMemo, useState } from "react";
+import { Film, ImageIcon, Loader2, Music, Palette, Plus, RefreshCw, RotateCcw, Sparkles, Trash2, Type, X } from "lucide-react";
+import { toast } from "sonner";
+import { replaceClipMedia } from "../dnd";
+import { generateImage } from "./AiImagePanel";
+import { adjacentPrev, clipEnd, findClip, keyframeGain, mappedWords } from "@/lib/timeline/derive";
 import { DEFAULT_FILTERS, DEFAULT_TRANSFORM } from "@/lib/timeline/factory";
 import { FONTS, FONT_IDS } from "@/lib/timeline/fonts";
 import { deleteClips, moveClip, trimClip, updateClip } from "@/lib/timeline/ops";
@@ -113,10 +116,11 @@ function VisualInspector({ clip, track }: { clip: VisualClip; track: VideoTrack 
   return (
     <div>
       <Header icon={clip.type === "image" ? ImageIcon : clip.type === "color" ? Palette : Film} title={clip.name} id={clip.id} />
-      <div className="px-4 pt-3">
-        <Button variant="secondary" size="sm" className="w-full" onClick={() => setReplace(clip.id)}>
-          <RefreshCw /> Replace media
+      <div className="grid grid-cols-2 gap-2 px-4 pt-3">
+        <Button variant="secondary" size="sm" onClick={() => setReplace(clip.id)}>
+          <RefreshCw /> Replace
         </Button>
+        <GenerateForClip clip={clip} />
       </div>
       <Timing clip={clip} />
       <AudioControls clip={clip} />
@@ -492,5 +496,34 @@ function ProjectSettings() {
         </p>
       </Section>
     </div>
+  );
+}
+
+/** Generate an AI image for this clip from what's being said over it (plus its keywords). */
+function GenerateForClip({ clip }: { clip: VisualClip }) {
+  const [busy, setBusy] = useState(false);
+  const run = async () => {
+    const tl = useEditor.getState().timeline;
+    const said = mappedWords(tl)
+      .filter((w) => w.start < clipEnd(clip) && w.end > clip.start)
+      .map((w) => w.text)
+      .join(" ");
+    const hint = [clip.keywords?.join(", "), said && `illustrating: "${said}"`].filter(Boolean).join(". ");
+    const prompt = window.prompt("Describe the image (edit or keep the suggestion):", hint || clip.name);
+    if (!prompt?.trim()) return;
+    setBusy(true);
+    try {
+      const asset = await generateImage(prompt.trim(), clip.keywords ?? []);
+      if (replaceClipMedia(clip.id, asset)) toast.success("Generated a new image for this clip");
+    } catch (e) {
+      toast.error((e as Error).message);
+    } finally {
+      setBusy(false);
+    }
+  };
+  return (
+    <Button variant="secondary" size="sm" onClick={run} disabled={busy}>
+      {busy ? <Loader2 className="animate-spin" /> : <Sparkles />} {busy ? "Generating…" : "AI image"}
+    </Button>
   );
 }

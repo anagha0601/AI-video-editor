@@ -71,11 +71,14 @@ export async function pickVisual(opts: {
   aspect: Aspect;
   used: Set<string>;
   index: number;
+  useLibrary?: boolean;
+  useStock?: boolean;
 }): Promise<{ asset: MediaAsset | null; colors?: [string, string] }> {
-  const { library, keywords, used } = opts;
+  const { keywords, used } = opts;
+  const library = opts.useLibrary === false ? [] : opts.library;
   // 1) user's own media
   const ranked = library
-    .filter((a) => (a.type === "video" || a.type === "image") && a.source !== "pexels")
+    .filter((a) => (a.type === "video" || a.type === "image") && a.source !== "pexels" && a.source !== "ai")
     .map((a) => ({ a, s: scoreAsset(a, keywords) - (used.has(a.id) ? 0.5 : 0) }))
     .filter((x) => x.s > 0.4)
     .sort((x, y) => y.s - x.s);
@@ -84,7 +87,7 @@ export async function pickVisual(opts: {
     return { asset: ranked[0].a };
   }
   // 2) Pexels video, 3) Pexels photo
-  if (hasPexels()) {
+  if (hasPexels() && opts.useStock !== false) {
     const tags = [...keywords, ...opts.query.split(/\s+/)];
     for (const q of [opts.query, keywords.slice(0, 2).join(" ")].filter(Boolean)) {
       try {

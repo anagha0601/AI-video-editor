@@ -9,10 +9,12 @@ export interface Scene {
   visual_keywords: string[];
   query: string; // stock-footage search phrase
   mood: string;
+  image_prompt: string; // prompt for an AI-generated still when no footage fits
 }
 
 export interface SceneSplit {
   title: string;
+  style: string; // shared visual style for AI images, keeps scenes consistent
   scenes: Scene[];
 }
 
@@ -37,7 +39,9 @@ export function keywordsOf(text: string, n = 4) {
 }
 
 /** Turn word-index boundaries into timed scenes; cuts land midway through pauses. */
-function toScenes(words: Word[], startIdx: number[], duration: number, meta: { keywords: string[]; query: string; mood: string }[]): Scene[] {
+type SceneMeta = { keywords: string[]; query: string; mood: string; image_prompt?: string };
+
+function toScenes(words: Word[], startIdx: number[], duration: number, meta: SceneMeta[]): Scene[] {
   const scenes: Scene[] = [];
   for (let i = 0; i < startIdx.length; i++) {
     const s = startIdx[i];
@@ -47,7 +51,16 @@ function toScenes(words: Word[], startIdx: number[], duration: number, meta: { k
     const end = i + 1 < startIdx.length ? cut(startIdx[i + 1]) : Math.max(duration, words[words.length - 1].end + 0.3);
     const text = words.slice(s, e + 1).map((w) => w.text).join(" ");
     const m = meta[i] ?? { keywords: keywordsOf(text), query: keywordsOf(text, 2).join(" "), mood: "neutral" };
-    scenes.push({ start, end, text, visual_keywords: m.keywords, query: m.query || m.keywords.slice(0, 2).join(" "), mood: m.mood });
+    const query = m.query || m.keywords.slice(0, 2).join(" ");
+    scenes.push({
+      start,
+      end,
+      text,
+      visual_keywords: m.keywords,
+      query,
+      mood: m.mood,
+      image_prompt: m.image_prompt || `${query}, ${m.keywords.join(", ")}, ${m.mood} mood`,
+    });
   }
   return scenes;
 }
@@ -83,26 +96,35 @@ function enforceMin(words: Word[], starts: number[], min = 1.2) {
 
 export async function splitScenes(words: Word[], duration: number, aspect: string): Promise<SceneSplit & { ai: boolean }> {
   if (!words.length) {
-    return { title: "Untitled", ai: false, scenes: [{ start: 0, end: Math.max(duration, 1), text: "", visual_keywords: ["abstract"], query: "abstract background", mood: "neutral" }] };
+    return {
+      title: "Untitled",
+      style: "",
+      ai: false,
+      scenes: [{ start: 0, end: Math.max(duration, 1), text: "", visual_keywords: ["abstract"], query: "abstract background", mood: "neutral", image_prompt: "soft abstract gradient background" }],
+    };
   }
   if (hasGemini()) {
     try {
       const listing = words.map((w, i) => `${i}:${w.text}`).join(" ");
       const res = await geminiJson<{
         title: string;
-        scenes: { startWord: number; keywords: string[]; query: string; mood: string }[];
+        style: string;
+        scenes: { startWord: number; keywords: string[]; query: string; mood: string; image_prompt: string }[];
       }>({
         system:
           "You are a short-form video editor. Split a voiceover transcript into visual scenes (one B-roll shot each). " +
           "Scenes should be 2-6 seconds of speech and follow the meaning (new idea = new shot). For each scene give " +
           "3-5 concrete visual keywords (things a camera can film: objects, places, actions, people) and a 2-4 word stock-footage search query. " +
           "Avoid abstract words like 'productivity' in queries; translate them into filmable scenes (e.g. 'person writing notebook'). " +
-          "Also give a punchy 2-6 word title/hook for the video.",
+          "For each scene also write image_prompt: a vivid one-sentence description of a single photographic shot for that line (subject, setting, action, lighting, camera angle), " +
+          "used to generate an image if no footage exists. Keep people/settings consistent across scenes. Also give a punchy 2-6 word title/hook and a short shared " +
+          "visual `style` (e.g. 'warm natural light, 35mm film look') for all images.",
         parts: [{ text: `Aspect ratio: ${aspect}. Transcript words as index:word —\n${listing}\n\nReturn scenes in order; startWord is the index of the first word of each scene; the first scene starts at 0.` }],
         schema: {
           type: "object",
           properties: {
             title: { type: "string" },
+            style: { type: "string" },
             scenes: {
               type: "array",
               items: {
@@ -112,12 +134,13 @@ export async function splitScenes(words: Word[], duration: number, aspect: strin
                   keywords: { type: "array", items: { type: "string" } },
                   query: { type: "string" },
                   mood: { type: "string" },
+                  image_prompt: { type: "string" },
                 },
-                required: ["startWord", "keywords", "query", "mood"],
+                required: ["startWord", "keywords", "query", "mood", "image_prompt"],
               },
             },
           },
-          required: ["title", "scenes"],
+          required: ["title", "style", "scenes"],
         },
         temperature: 0.3,
       });
@@ -131,9 +154,9 @@ export async function splitScenes(words: Word[], duration: number, aspect: strin
         const kept = enforceMin(words, starts);
         const meta = kept.map((st) => {
           const s = raw.find((r) => r.startWord === st)!;
-          return { keywords: s.keywords.slice(0, 5).map((k) => k.toLowerCase()), query: s.query, mood: s.mood };
+          return { keywords: s.keywords.slice(0, 5).map((k) => k.toLowerCase()), query: s.query, mood: s.mood, image_prompt: s.image_prompt };
         });
-        return { title: res.title?.trim() || "Untitled", ai: true, scenes: toScenes(words, kept, duration, meta) };
+        return { title: res.title?.trim() || "Untitled", style: res.style ?? "", ai: true, scenes: toScenes(words, kept, duration, meta) };
       }
     } catch (err) {
       console.error("[scenes] Gemini failed, using heuristic split:", err);
@@ -141,5 +164,5 @@ export async function splitScenes(words: Word[], duration: number, aspect: strin
   }
   const starts = enforceMin(words, heuristicStarts(words));
   const scenes = toScenes(words, starts, duration, []);
-  return { title: words.slice(0, 6).map((w) => w.text).join(" ").replace(/[.,!?]$/, ""), ai: false, scenes };
+  return { title: words.slice(0, 6).map((w) => w.text).join(" ").replace(/[.,!?]$/, ""), style: "", ai: false, scenes };
 }

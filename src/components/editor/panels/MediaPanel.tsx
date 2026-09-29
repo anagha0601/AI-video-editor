@@ -4,43 +4,21 @@ import { useState } from "react";
 import { X } from "lucide-react";
 import { toast } from "sonner";
 import { findClip } from "@/lib/timeline/derive";
-import { updateClip } from "@/lib/timeline/ops";
-import type { AnyClip, VisualClip } from "@/lib/timeline/types";
 import type { AssetDTO } from "@/lib/client/upload";
 import { MediaLibrary } from "@/components/media/MediaLibrary";
 import { StockSearch } from "@/components/media/StockSearch";
 import { Button } from "@/components/ui/button";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { useEditor } from "../store";
-import { addPayload, dragProps, stockToAsset } from "../dnd";
+import { addPayload, dragProps, replaceClipMedia, stockToAsset } from "../dnd";
+import { AiImagePanel } from "./AiImagePanel";
 
 function replaceWith(asset: AssetDTO) {
   const s = useEditor.getState();
-  const id = s.replaceTarget;
-  const hit = id ? findClip(s.timeline, id) : null;
-  if (!hit || hit.clip.type === "text" || hit.clip.type === "audio") return;
-  if (asset.type !== "video" && asset.type !== "image") return toast.error("Pick a video or photo");
-  const c = hit.clip as VisualClip;
-  const patch: Partial<VisualClip> = {
-    type: asset.type,
-    assetId: asset.id,
-    src: asset.url,
-    thumb: asset.thumbUrl ?? asset.url,
-    srcDuration: asset.duration,
-    srcWidth: asset.width,
-    srcHeight: asset.height,
-    hasAudio: asset.meta?.hasAudio ?? asset.type === "video",
-    muted: asset.source === "pexels",
-    in: 0,
-    colors: null,
-    keywords: asset.tags,
-    name: c.scene ? `Scene ${c.scene} · ${asset.name}` : asset.name,
-    kenBurns: asset.type === "image" ? (c.kenBurns ?? { direction: "in", amount: 0.12 }) : null,
-  };
-  if (asset.type === "video" && asset.duration) patch.duration = Math.min(c.duration, asset.duration);
-  s.commit(updateClip(s.timeline, c.id, patch as Partial<AnyClip>), "Replace media");
-  s.setReplaceTarget(null);
-  toast.success("Media replaced");
+  if (s.replaceTarget && replaceClipMedia(s.replaceTarget, asset)) {
+    s.setReplaceTarget(null);
+    toast.success("Media replaced");
+  }
 }
 
 export function MediaPanel() {
@@ -69,7 +47,11 @@ export function MediaPanel() {
         <TabsList className="w-full">
           <TabsTrigger value="library">My media</TabsTrigger>
           <TabsTrigger value="stock">Stock</TabsTrigger>
+          <TabsTrigger value="ai">AI image</TabsTrigger>
         </TabsList>
+        <TabsContent value="ai" className="min-h-0 flex-1 overflow-y-auto pt-3">
+          <AiImagePanel onPick={(a) => (replaceTarget ? replaceWith(a) : add(a))} replacing={Boolean(replaceTarget)} />
+        </TabsContent>
         <TabsContent value="library" className="min-h-0 flex-1 overflow-y-auto pt-3">
           <MediaLibrary
             compact

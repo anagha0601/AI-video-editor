@@ -1,10 +1,12 @@
 import "server-only";
-import type { Prisma } from "@prisma/client";
+import type { MediaAsset, Prisma } from "@prisma/client";
 import { emptyTimeline, newAudioClip, newTextClip, newVisualClip } from "@/lib/timeline/factory";
 import type { Aspect, Timeline, VisualClip, VoiceTrack as VoiceTrackT, VideoTrack, TextTrack, Word } from "@/lib/timeline/types";
 import { prisma } from "./db";
 import { splitScenes } from "./scenes";
-import { clipFromAsset, pickVisual } from "./visuals";
+import { clipFromAsset, pickVisual, scoreAsset } from "./visuals";
+import { hasGemini } from "./gemini";
+import { generateImageAsset, pool } from "./generate";
 
 type Transcript = { words: Word[]; duration?: number; language?: string };
 
@@ -26,33 +28,83 @@ export async function buildFirstCut(projectId: string) {
   });
 
   const used = new Set<string>();
+  const mode = project.visualMode; // auto | ai | stock
+  const scenes = split.scenes;
+
+  // 0) Media the user attached to this project always goes in: best keyword match
+  //    first, then any leftovers spread over the scenes that still have nothing.
+  const attached = project.assetIds.length
+    ? await prisma.mediaAsset.findMany({ where: { id: { in: project.assetIds }, userId: project.userId, type: { in: ["video", "image"] } } })
+    : [];
+  attached.sort((x, y) => project.assetIds.indexOf(x.id) - project.assetIds.indexOf(y.id));
+  const assigned = new Map<number, MediaAsset>();
+  const pairs = scenes.flatMap((s, i) => attached.map((a) => ({ i, a, score: scoreAsset(a, s.visual_keywords) })));
+  for (const p of pairs.filter((p) => p.score > 0).sort((x, y) => y.score - x.score)) {
+    if (!assigned.has(p.i) && !used.has(p.a.id)) {
+      assigned.set(p.i, p.a);
+      used.add(p.a.id);
+    }
+  }
+  const leftovers = attached.filter((a) => !used.has(a.id));
+  const free = scenes.map((_, i) => i).filter((i) => !assigned.has(i));
+  leftovers.forEach((a, k) => {
+    if (!free.length) return;
+    const idx = free[Math.min(free.length - 1, Math.floor((k * free.length) / leftovers.length))];
+    if (assigned.has(idx)) return;
+    assigned.set(idx, a);
+    used.add(a.id);
+  });
+
   const visuals: VisualClip[] = [];
+  const needsAi: { clip: VisualClip; scene: (typeof scenes)[number] }[] = [];
+  const canAi = hasGemini() && mode !== "stock";
   // Sequential on purpose: keeps "used" consistent so scenes don't repeat a shot.
-  for (let i = 0; i < split.scenes.length; i++) {
-    const s = split.scenes[i];
+  for (let i = 0; i < scenes.length; i++) {
+    const s = scenes[i];
     // A video shorter than its scene gets followed by another shot until the scene is filled.
     let cursor = s.start;
     for (let shot = 0; shot < 3 && s.end - cursor > 0.1; shot++) {
       const dur = s.end - cursor;
-      const pick = await pickVisual({
-        userId: project.userId,
-        library,
-        keywords: s.visual_keywords,
-        query: s.query,
-        duration: dur,
-        aspect,
-        used,
-        index: i + shot,
-      });
       const extra = { scene: i + 1, keywords: s.visual_keywords, name: `Scene ${i + 1}` };
+      const mine = shot === 0 ? assigned.get(i) : undefined;
+      const pick = mine
+        ? { asset: mine }
+        : await pickVisual({
+            userId: project.userId,
+            library,
+            keywords: s.visual_keywords,
+            query: s.query,
+            duration: dur,
+            aspect,
+            used,
+            index: i + shot,
+            useLibrary: mode !== "ai",
+            useStock: mode !== "ai",
+          });
       const clip = pick.asset
-        ? clipFromAsset(pick.asset, cursor, dur, { ...extra, name: `Scene ${i + 1} · ${s.query || pick.asset.name}` })
+        ? clipFromAsset(pick.asset, cursor, dur, { ...extra, name: `Scene ${i + 1} · ${mine ? pick.asset.name : s.query || pick.asset.name}` })
         : newVisualClip({ type: "color", start: cursor, duration: dur, colors: pick.colors, ...extra });
-      if (shot === 2) clip.duration = dur; // last resort: hold the final frame
+      if (!pick.asset && canAi) needsAi.push({ clip, scene: s });
+      if (shot === 2 || !pick.asset) clip.duration = dur; // hold the final frame / fill the scene
       visuals.push(clip);
       cursor += clip.duration;
     }
   }
+
+  // 1) AI-generated stills for scenes without footage (in parallel, gradient stays on failure).
+  await pool(needsAi, 4, async ({ clip, scene }) => {
+    try {
+      const prompt = `${scene.image_prompt}${split.style ? `. Visual style: ${split.style}` : ""}`;
+      const a = await generateImageAsset(project.userId, prompt, aspect, scene.visual_keywords);
+      Object.assign(clip, clipFromAsset(a, clip.start, clip.duration, { scene: clip.scene, keywords: clip.keywords, name: `Scene ${clip.scene} · AI` }), {
+        id: clip.id,
+        kenBurns: { direction: (["in", "out", "left", "right"] as const)[(clip.scene ?? 0) % 4], amount: 0.12 },
+      });
+    } catch (err) {
+      console.error("[first-cut] AI image failed", err);
+    }
+  });
+
   const tl: Timeline = emptyTimeline(aspect);
   const assetId = voice.assetId ?? voice.id;
   tl.transcripts[assetId] = { words };

@@ -6,6 +6,12 @@ import { GoogleGenAI } from "@google/genai";
 
 let client: GoogleGenAI | null = null;
 
+export function geminiClient() {
+  if (!process.env.GEMINI_API_KEY) throw new Error("GEMINI_API_KEY is not set");
+  client ??= new GoogleGenAI({ apiKey: process.env.GEMINI_API_KEY });
+  return client;
+}
+
 export const hasGemini = () => Boolean(process.env.GEMINI_API_KEY);
 
 function models() {
@@ -21,8 +27,7 @@ export async function geminiJson<T>(opts: {
   schema: unknown;
   temperature?: number;
 }): Promise<T> {
-  if (!process.env.GEMINI_API_KEY) throw new Error("GEMINI_API_KEY is not set");
-  client ??= new GoogleGenAI({ apiKey: process.env.GEMINI_API_KEY });
+  const client = geminiClient();
   let lastErr: unknown;
   for (const model of models()) {
     for (let attempt = 0; attempt < 3; attempt++) {

@@ -6,6 +6,7 @@ import type { Timeline, VisualClip } from "@/lib/timeline/types";
 import { prisma } from "./db";
 import { geminiJson, hasGemini } from "./gemini";
 import { pickVisual } from "./visuals";
+import { generateImageAsset } from "./generate";
 
 const OP_NAMES = [
   "cut_pauses",
@@ -100,7 +101,7 @@ Operations (only use the fields each needs):
 - cut_pauses {minGap?}: remove pauses between spoken words longer than minGap (default 0.7) from the whole video.
 - set_filters {clipIds, brightness?, contrast?, saturation?, preset?}: multipliers where 1 = unchanged (brightness/contrast 0.5-1.5, saturation 0-2). preset: none|warm|cool|bw. "Moodier" = contrast up ~1.2, saturation down ~0.75, brightness ~0.9, often cool. "Warmer/cozier" = warm preset.
 - set_clip {clipIds, speed?, volume?, muted?, fadeIn?, fadeOut?, kenBurns?, transition?, transitionDuration?}: transition is how a clip enters from the previous one (cut|crossfade|slide|zoom).
-- replace_visual {clipIds, query}: swap the footage of visual clips for new stock/library media found with the query (2-4 filmable words).
+- replace_visual {clipIds, query}: swap the visuals of clips for the user's media, stock footage or a newly AI-generated image. query = a short visual description (e.g. "calm beach at sunset, golden light").
 - add_text {text, start, duration?, textPreset?, color?, size?, font?, y?, animIn?, animOut?}: always set textPreset: title (big title card), lower-third (name/tip bar near the bottom) or headline (mid-screen statement). A "title card at start" = add_text with textPreset title at start 0. add_text always needs text: use the user's words, or write a short (2-6 word) line that fits what is said at that moment — never placeholder text.
 - update_text {clipIds, text?, color?, size?, font?, y?, animIn?, animOut?}
 - delete_clips {clipIds}
@@ -143,8 +144,9 @@ export async function planAiEdit(userId: string, tl: Timeline, command: string) 
         used,
         index: i,
       });
-      if (!pick.asset) continue;
-      const a = pick.asset;
+      // Nothing in the library/stock: generate the shot instead.
+      const a = pick.asset ?? (hasGemini() ? await generateImageAsset(userId, o.query ?? "", tl.aspect, words).catch(() => null) : null);
+      if (!a) continue;
       const r: ResolvedVisual = {
         type: a.type === "video" ? "video" : "image",
         assetId: a.id,

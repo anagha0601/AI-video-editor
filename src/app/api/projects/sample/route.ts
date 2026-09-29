@@ -4,7 +4,7 @@ import { prisma } from "@/server/db";
 import { maybeBuildFirstCut } from "@/server/firstcut";
 import { requireUserId, route } from "@/server/http";
 
-export const maxDuration = 60;
+export const maxDuration = 300;
 
 const body = z.object({ aspect: z.enum(["9:16", "16:9", "1:1"]).default("9:16") });
 
