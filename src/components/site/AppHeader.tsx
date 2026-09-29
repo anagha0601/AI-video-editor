@@ -7,14 +7,17 @@ import { Logo } from "./Logo";
 export function AppHeader({ email }: { email?: string | null }) {
   return (
     <header className="sticky top-0 z-30 border-b bg-background/80 backdrop-blur">
-      <div className="mx-auto flex h-14 max-w-7xl items-center gap-3 px-4 sm:px-6">
+      <div className="mx-auto flex h-14 max-w-7xl items-center gap-2 px-3 sm:gap-3 sm:px-6">
         <Logo href="/dashboard" />
-        <nav className="ml-2 flex items-center gap-1 text-sm">
-          <Link href="/dashboard" className="rounded-md px-2.5 py-1.5 text-muted-foreground hover:bg-muted hover:text-foreground">
+        <nav className="flex items-center text-sm sm:ml-2 sm:gap-1">
+          <Link href="/dashboard" className="rounded-md px-2 py-1.5 text-muted-foreground hover:bg-muted hover:text-foreground sm:px-2.5">
             Projects
           </Link>
-          <Link href="/media" className="rounded-md px-2.5 py-1.5 text-muted-foreground hover:bg-muted hover:text-foreground">
+          <Link href="/media" className="rounded-md px-2 py-1.5 text-muted-foreground hover:bg-muted hover:text-foreground sm:px-2.5">
             Media
+          </Link>
+          <Link href="/usage" className="rounded-md px-2 py-1.5 text-muted-foreground hover:bg-muted hover:text-foreground sm:px-2.5">
+            Usage
           </Link>
         </nav>
         <div className="ml-auto flex items-center gap-2">

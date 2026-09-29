@@ -11,6 +11,15 @@ import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover
 import { cn } from "@/lib/utils";
 
 type Filter = "all" | "video" | "image" | "music" | "audio";
+type SourceFilter = "all" | "upload" | "pexels" | "gemini_manual" | "ai";
+const SOURCES: { id: SourceFilter; label: string }[] = [
+  { id: "all", label: "Any source" },
+  { id: "upload", label: "Uploads" },
+  { id: "pexels", label: "Pexels" },
+  { id: "gemini_manual", label: "Gemini (manual)" },
+  { id: "ai", label: "AI generated" },
+];
+
 const FILTERS: { id: Filter; label: string }[] = [
   { id: "all", label: "All" },
   { id: "video", label: "Videos" },
@@ -41,6 +50,7 @@ export function MediaLibrary({
   itemProps,
   compact,
   highlight,
+  onUploaded,
 }: {
   assets: AssetDTO[] | null;
   setAssets: (fn: (a: AssetDTO[] | null) => AssetDTO[] | null) => void;
@@ -48,8 +58,10 @@ export function MediaLibrary({
   itemProps?: (a: AssetDTO) => Record<string, unknown>;
   compact?: boolean;
   highlight?: string;
+  onUploaded?: (a: AssetDTO) => void; // e.g. the editor puts new uploads on the timeline
 }) {
   const [filter, setFilter] = useState<Filter>("all");
+  const [source, setSource] = useState<SourceFilter>("all");
   const [q, setQ] = useState("");
   const [uploads, setUploads] = useState<{ id: number; name: string; p: number }[]>([]);
   const fileRef = useRef<HTMLInputElement>(null);
@@ -60,9 +72,10 @@ export function MediaLibrary({
     return (assets ?? []).filter(
       (a) =>
         (filter === "all" || a.type === filter) &&
+        (source === "all" || a.source === source) &&
         words.every((w) => a.name.toLowerCase().includes(w) || a.tags.some((t) => t.includes(w))),
     );
-  }, [assets, filter, q]);
+  }, [assets, filter, source, q]);
 
   const upload = async (files: FileList | null, as: "auto" | "music") => {
     if (!files) return;
@@ -73,7 +86,8 @@ export function MediaLibrary({
         try {
           const asset = await uploadAsset(file, as, (p) => setUploads((u) => u.map((x) => (x.id === id ? { ...x, p } : x))));
           setAssets((a) => [asset, ...(a ?? [])]);
-          toast.success(`${file.name} added${asset.tags.length ? ` · tagged ${asset.tags.slice(0, 3).join(", ")}` : ""}`);
+          if (onUploaded) onUploaded(asset);
+          else toast.success(`${file.name} added${asset.tags.length ? ` · tagged ${asset.tags.slice(0, 3).join(", ")}` : ""}`);
         } catch (e) {
           toast.error(`${file.name}: ${(e as Error).message}`);
         } finally {
@@ -134,6 +148,18 @@ export function MediaLibrary({
             type="button"
             onClick={() => setFilter(f.id)}
             className={cn("shrink-0 rounded-full border px-2.5 py-1 text-[11px]", filter === f.id ? "border-primary bg-primary/15 text-foreground" : "text-muted-foreground hover:text-foreground")}
+          >
+            {f.label}
+          </button>
+        ))}
+      </div>
+      <div className="no-scrollbar flex gap-1 overflow-x-auto" aria-label="Filter by source">
+        {SOURCES.map((f) => (
+          <button
+            key={f.id}
+            type="button"
+            onClick={() => setSource(f.id)}
+            className={cn("shrink-0 rounded-full border px-2.5 py-1 text-[11px]", source === f.id ? "border-primary bg-primary/15 text-foreground" : "text-muted-foreground hover:text-foreground")}
           >
             {f.label}
           </button>
@@ -224,7 +250,7 @@ function Thumb({ a }: { a: AssetDTO }) {
       <span className="absolute bottom-1 left-1 flex items-center gap-1 rounded bg-black/60 px-1 text-[10px] text-white">
         <Icon className="size-2.5" />
         {a.duration ? `${a.duration.toFixed(1)}s` : ""}
-        {a.source === "pexels" ? " · Pexels" : a.source === "ai" ? " · AI" : ""}
+        {a.source === "pexels" ? " · Pexels" : a.source === "ai" ? " · AI" : a.source === "gemini_manual" ? " · Gemini" : ""}
       </span>
     </div>
   );

@@ -53,6 +53,7 @@ export function NewProject({ gemini, pexels }: { gemini: boolean; pexels: boolea
   const [tone, setTone] = useState("engaging");
   const [voiceName, setVoiceName] = useState("Kore");
   const [writing, setWriting] = useState(false);
+  const [usageIds, setUsageIds] = useState<string[]>([]);
   // voice
   const [voiceTab, setVoiceTab] = useState("upload");
   const [file, setFile] = useState<File | null>(null);
@@ -76,7 +77,8 @@ export function NewProject({ gemini, pexels }: { gemini: boolean; pexels: boolea
     if (!idea.trim()) return;
     setWriting(true);
     try {
-      const r = await api<{ title: string; script: string }>("/api/script", { method: "POST", json: { idea, seconds, tone } });
+      const r = await api<{ title: string; script: string; usageIds: string[] }>("/api/script", { method: "POST", json: { idea, seconds, tone } });
+      setUsageIds((u) => [...u, ...r.usageIds]);
       setScript(r.script);
       if (!title.trim()) setTitle(r.title);
     } catch (e) {
@@ -108,9 +110,11 @@ export function NewProject({ gemini, pexels }: { gemini: boolean; pexels: boolea
   const create = async () => {
     try {
       let finalScript = script.trim();
+      const ids = [...usageIds];
       if (source === "idea" && !finalScript) {
         setBusy("Writing your script…");
-        const r = await api<{ title: string; script: string }>("/api/script", { method: "POST", json: { idea, seconds, tone } });
+        const r = await api<{ title: string; script: string; usageIds: string[] }>("/api/script", { method: "POST", json: { idea, seconds, tone } });
+        ids.push(...r.usageIds);
         finalScript = r.script;
         if (!title.trim()) setTitle(r.title);
       }
@@ -124,6 +128,7 @@ export function NewProject({ gemini, pexels }: { gemini: boolean; pexels: boolea
           prompt: source === "idea" ? idea : source === "script" ? finalScript : undefined,
           visualMode,
           assetIds: attached.map((a) => a.asset?.id).filter(Boolean),
+          usageIds: ids,
         },
       });
       if (source === "voice") {

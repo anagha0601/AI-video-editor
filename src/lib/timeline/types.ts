@@ -73,6 +73,7 @@ export interface VisualClip extends ClipBase {
   kenBurns?: KenBurns | null; // images only
   colors?: [string, string] | null; // "color" clips: diagonal gradient
   keywords?: string[]; // what the visual shows (used by AI edits)
+  visualHint?: string | null; // one-sentence shot description for this scene (image prompt)
   scene?: number | null; // 1-based scene number from the first cut
 }
 

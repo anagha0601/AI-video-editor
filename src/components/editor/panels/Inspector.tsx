@@ -1,9 +1,10 @@
 "use client";
 
 import { useMemo, useState } from "react";
-import { Film, ImageIcon, Loader2, Music, Palette, Plus, RefreshCw, RotateCcw, Sparkles, Trash2, Type, X } from "lucide-react";
+import { ClipboardCopy, Film, ImageIcon, Loader2, Music, Palette, Plus, RefreshCw, RotateCcw, Sparkles, Trash2, Type, X } from "lucide-react";
 import { toast } from "sonner";
 import { replaceClipMedia } from "../dnd";
+import { copyScenePrompt } from "../quickimport";
 import { generateImage } from "./AiImagePanel";
 import { adjacentPrev, clipEnd, findClip, keyframeGain, mappedWords } from "@/lib/timeline/derive";
 import { DEFAULT_FILTERS, DEFAULT_TRANSFORM } from "@/lib/timeline/factory";
@@ -121,7 +122,11 @@ function VisualInspector({ clip, track }: { clip: VisualClip; track: VideoTrack 
           <RefreshCw /> Replace
         </Button>
         <GenerateForClip clip={clip} />
+        <Button variant="secondary" size="sm" className="col-span-2" onClick={() => copyScenePrompt(clip)} title="Copy a ready-to-paste image prompt for Gemini">
+          <ClipboardCopy /> Copy prompt for Gemini
+        </Button>
       </div>
+      <p className="px-4 pt-2 text-[11px] text-muted-foreground">Tip: paste an image with Ctrl+V to put it on this scene.</p>
       <Timing clip={clip} />
       <AudioControls clip={clip} />
       {clip.type === "image" && (

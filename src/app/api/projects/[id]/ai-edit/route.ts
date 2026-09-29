@@ -15,5 +15,5 @@ export const POST = route(async (req: Request, ctx: Ctx<{ id: string }>) => {
   const parsed = body.safeParse(await req.json().catch(() => null));
   if (!parsed.success) throw new HttpError(400, "Type what you'd like to change");
   assertTimeline(parsed.data.json);
-  return planAiEdit(userId, parsed.data.json, parsed.data.command);
+  return planAiEdit(userId, parsed.data.json, parsed.data.command, id);
 });

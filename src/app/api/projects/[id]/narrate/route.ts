@@ -24,7 +24,7 @@ export const POST = route(async (req: Request, ctx: Ctx<{ id: string }>) => {
   if (!parsed.success) throw new HttpError(400, parsed.error.issues[0]?.message ?? "Invalid script");
   const { script, voice, tone } = parsed.data;
 
-  const wav = await synthesizeSpeech(script, voice, tone);
+  const wav = await synthesizeSpeech(script, voice, tone, { userId, projectId: project.id });
   const key = `u/${userId}/voice/${nanoid(12)}-ai-voice.wav`;
   const url = await putObject(key, wav, "audio/wav");
   const asset = await prisma.mediaAsset.create({

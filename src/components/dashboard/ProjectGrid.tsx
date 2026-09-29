@@ -174,7 +174,7 @@ export function ProjectGrid({ initial }: { initial: ProjectCard[] }) {
                 <div className="p-3">
                   <div className="truncate text-sm font-medium">{p.title}</div>
                   <div className="mt-0.5 text-[11px] text-muted-foreground">
-                    {new Date(p.updatedAt).toLocaleDateString(undefined, { month: "short", day: "numeric" })}
+                    {new Date(p.updatedAt).toLocaleDateString("en-US", { month: "short", day: "numeric", timeZone: "UTC" })}
                     {p.renders ? ` · ${p.renders} render${p.renders > 1 ? "s" : ""}` : ""}
                     {p.isSample ? " · sample" : ""}
                   </div>

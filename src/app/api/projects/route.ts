@@ -19,6 +19,7 @@ const body = z.object({
   prompt: z.string().trim().max(6000).optional(),
   visualMode: z.enum(["auto", "ai", "stock"]).default("auto"),
   assetIds: z.array(z.string()).max(100).default([]),
+  usageIds: z.array(z.string()).max(50).default([]), // script-writing calls made before the project existed
 });
 
 export const POST = route(async (req: Request) => {
@@ -38,5 +39,8 @@ export const POST = route(async (req: Request) => {
     },
     select: { id: true },
   });
+  if (parsed.data.usageIds.length) {
+    await prisma.apiUsage.updateMany({ where: { id: { in: parsed.data.usageIds }, userId, projectId: null }, data: { projectId: project.id } });
+  }
   return { project };
 });

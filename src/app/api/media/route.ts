@@ -19,7 +19,7 @@ export const GET = route(async (req: Request) => {
 });
 
 const body = z.object({
-  source: z.enum(["upload", "pexels"]).default("upload"),
+  source: z.enum(["upload", "pexels", "gemini_manual"]).default("upload"),
   type: z.enum(["video", "image", "music", "audio"]),
   url: z.string().min(1).max(2000),
   thumbUrl: z.string().max(2000).nullish(),
@@ -40,7 +40,7 @@ export const POST = route(async (req: Request) => {
   if (!parsed.success) throw new HttpError(400, "Invalid media");
   const d = parsed.data;
   let key: string | null = null;
-  if (d.source === "upload") {
+  if (d.source !== "pexels") {
     key = keyFromUrl(d.url);
     if (!key || !key.startsWith(`u/${userId}/`)) throw new HttpError(400, "Upload the file first");
   } else {
@@ -49,10 +49,11 @@ export const POST = route(async (req: Request) => {
     if (existing) return { asset: existing };
   }
   let tags = d.tags ?? [];
+  if (d.source === "gemini_manual") tags = ["gemini", ...tags];
   if (d.source === "upload") {
     tags = [...nameTags(d.name)];
     if (d.type === "music") tags.push("music");
-    if (d.type === "video" || d.type === "image") tags.push(...(await autoTags(d.thumbUrl ?? (d.type === "image" ? d.url : null))));
+    if (d.type === "video" || d.type === "image") tags.push(...(await autoTags(d.thumbUrl ?? (d.type === "image" ? d.url : null), userId)));
   }
   const asset = await prisma.mediaAsset.create({
     data: {

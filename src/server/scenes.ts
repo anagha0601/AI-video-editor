@@ -1,6 +1,6 @@
 import "server-only";
 import type { Word } from "@/lib/timeline/types";
-import { geminiJson, hasGemini } from "./gemini";
+import { geminiJson, hasGemini, type UsageCtx } from "./gemini";
 
 export interface Scene {
   start: number; // timeline seconds (taken from whisper, never from the LLM)
@@ -94,7 +94,7 @@ function enforceMin(words: Word[], starts: number[], min = 1.2) {
   return out;
 }
 
-export async function splitScenes(words: Word[], duration: number, aspect: string): Promise<SceneSplit & { ai: boolean }> {
+export async function splitScenes(words: Word[], duration: number, aspect: string, usage: Omit<UsageCtx, "feature">): Promise<SceneSplit & { ai: boolean }> {
   if (!words.length) {
     return {
       title: "Untitled",
@@ -111,6 +111,7 @@ export async function splitScenes(words: Word[], duration: number, aspect: strin
         style: string;
         scenes: { startWord: number; keywords: string[]; query: string; mood: string; image_prompt: string }[];
       }>({
+        usage: { ...usage, feature: "scene_split" },
         system:
           "You are a short-form video editor. Split a voiceover transcript into visual scenes (one B-roll shot each). " +
           "Scenes should be 2-6 seconds of speech and follow the meaning (new idea = new shot). For each scene give " +

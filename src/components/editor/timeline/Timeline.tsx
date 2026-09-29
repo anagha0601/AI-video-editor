@@ -3,6 +3,7 @@
 import { memo, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
   Captions,
+  ClipboardCopy,
   Copy,
   Eye,
   EyeOff,
@@ -37,6 +38,7 @@ import { formatTime } from "../format";
 import { cachedCaptionLines } from "../preview/draw";
 import { loadPeaks } from "./peaks";
 import { DRAG_MIME, uploadAndAdd, useDropHandler, type DragPayload } from "../dnd";
+import { copyScenePrompt, dropImageAt, dropImageOnScene, droppedImages, hasDroppableImage } from "../quickimport";
 
 const HEADER_W = 132;
 const RULER_H = 24;
@@ -318,7 +320,7 @@ function TrackRow({
         onPointerDown={onLaneDown}
         onDragOver={(e) => {
           const types = e.dataTransfer.types;
-          if ((!types.includes(DRAG_MIME) && !types.includes("Files")) || track.kind === "captions") return;
+          if ((!types.includes(DRAG_MIME) && !hasDroppableImage(e.dataTransfer)) || track.kind === "captions") return;
           e.preventDefault();
           e.stopPropagation();
           setOver(true);
@@ -328,14 +330,16 @@ function TrackRow({
           setOver(false);
           const rect = e.currentTarget.getBoundingClientRect();
           const time = Math.max(0, (e.clientX - rect.left) / zoom);
-          if (e.dataTransfer.files.length) {
+          const raw = e.dataTransfer.getData(DRAG_MIME);
+          if (!raw) {
+            const dropped = droppedImages(e.dataTransfer);
             e.preventDefault();
             e.stopPropagation();
-            uploadAndAdd(e.dataTransfer.files, track.id, time);
+            // Desktop files (any media) upload as before; images dragged from a web page (e.g. Gemini) are imported.
+            if (e.dataTransfer.files.length && !dropped.fromBrowser) uploadAndAdd(e.dataTransfer.files, track.id, time);
+            else if (dropped.files.length || dropped.urls.length) dropImageAt(e.dataTransfer, track.id, time);
             return;
           }
-          const raw = e.dataTransfer.getData(DRAG_MIME);
-          if (!raw) return;
           e.preventDefault();
           e.stopPropagation();
           onDrop(JSON.parse(raw) as DragPayload, track.id, time);
@@ -426,6 +430,8 @@ function CaptionBlocks({ timeline, zoom, hidden }: { timeline: TL; zoom: number;
 
 const ClipView = memo(function ClipView({ clip, track, zoom, selected }: { clip: AnyClip; track: Track; zoom: number; selected: boolean }) {
   const [drag, setDrag] = useState<{ dx: number; dy: number } | null>(null);
+  const [imageOver, setImageOver] = useState(false);
+  const isScene = clip.type === "video" || clip.type === "image" || clip.type === "color";
   const left = clip.start * zoom;
   const width = Math.max(4, clip.duration * zoom);
 
@@ -510,17 +516,48 @@ const ClipView = memo(function ClipView({ clip, track, zoom, selected }: { clip:
   return (
     <div
       className={cn(
-        "absolute top-1 bottom-1 overflow-hidden rounded-md border text-[11px] shadow-sm",
+        "group/clip absolute top-1 bottom-1 overflow-hidden rounded-md border text-[11px] shadow-sm",
         clipColor(clip),
         selected ? "z-10 border-white ring-2 ring-white/70" : "border-black/40",
         drag && "z-50 opacity-80 shadow-xl",
+        imageOver && "z-20 ring-2 ring-primary",
         track.locked ? "cursor-not-allowed" : "cursor-grab active:cursor-grabbing",
       )}
       style={{ left, width, transform: drag ? `translate(${drag.dx}px, ${drag.dy}px)` : undefined }}
       onPointerDown={onBodyDown}
       onDoubleClick={() => useEditor.getState().setPlayhead(clip.start)}
+      data-scene-clip={isScene ? clip.id : undefined}
+      // Drop an image (from the desktop or a Gemini tab) onto a scene to replace its visual.
+      onDragOver={(e) => {
+        if (!isScene || track.locked || e.dataTransfer.types.includes(DRAG_MIME) || !hasDroppableImage(e.dataTransfer)) return;
+        e.preventDefault();
+        e.stopPropagation();
+        setImageOver(true);
+      }}
+      onDragLeave={() => setImageOver(false)}
+      onDrop={(e) => {
+        setImageOver(false);
+        if (!isScene || track.locked || e.dataTransfer.types.includes(DRAG_MIME)) return;
+        const d = droppedImages(e.dataTransfer);
+        if (!d.files.length && !d.urls.length) return;
+        e.preventDefault();
+        e.stopPropagation();
+        dropImageOnScene(e.dataTransfer, clip.id);
+      }}
     >
       <ClipBody clip={clip} width={width} zoom={zoom} />
+      {isScene && width > 70 && (
+        <button
+          type="button"
+          title="Copy an image prompt for this scene (paste it into Gemini)"
+          aria-label="Copy prompt"
+          className="absolute top-0.5 right-2.5 z-10 rounded bg-black/60 p-0.5 text-white opacity-0 group-hover/clip:opacity-100 hover:bg-black/80 [&_svg]:size-3"
+          onPointerDown={(e) => e.stopPropagation()}
+          onClick={() => copyScenePrompt(clip as VisualClip)}
+        >
+          <ClipboardCopy />
+        </button>
+      )}
       {"transition" in clip && clip.transition && clip.transition.type !== "cut" && (
         <div
           className="pointer-events-none absolute top-0 bottom-0 left-0 bg-gradient-to-r from-white/40 to-transparent"

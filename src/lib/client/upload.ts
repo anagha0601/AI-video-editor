@@ -102,7 +102,12 @@ export interface AssetDTO {
 }
 
 /** Full library upload: inspect, upload file + thumbnail, register (server auto-tags). */
-export async function uploadAsset(file: File, as: "auto" | "music", onProgress?: (p: number) => void): Promise<AssetDTO> {
+export async function uploadAsset(
+  file: File,
+  as: "auto" | "music",
+  onProgress?: (p: number) => void,
+  source: "upload" | "gemini_manual" = "upload",
+): Promise<AssetDTO> {
   const info = await inspectFile(file);
   const type = as === "music" || (info.type === "audio" && as === "auto") ? "music" : info.type;
   const url = await uploadFile(file, file.name, type === "music" ? "music" : info.type, (p) => onProgress?.(p * 0.95));
@@ -110,6 +115,7 @@ export async function uploadAsset(file: File, as: "auto" | "music", onProgress?:
   const { asset } = await api<{ asset: AssetDTO }>("/api/media", {
     method: "POST",
     json: {
+      source,
       type,
       url,
       thumbUrl,

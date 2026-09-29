@@ -112,9 +112,10 @@ Rules: refer only to clip ids that exist. "Scene N" means visual clips whose sce
 ("city clips" = visual clips whose keywords or name mention city/urban/street/buildings). Prefer the fewest ops that do exactly what was asked, and only include the fields an op uses.
 If the request is impossible, return no ops and explain in summary. summary is one short sentence describing the change.`;
 
-export async function planAiEdit(userId: string, tl: Timeline, command: string) {
+export async function planAiEdit(userId: string, tl: Timeline, command: string, projectId: string) {
   if (!hasGemini()) throw new Error("AI edits need GEMINI_API_KEY in the server environment.");
   const res = await geminiJson<{ summary: string; ops: (AiOp & { why?: string })[] }>({
+    usage: { feature: "ai_edit", userId, projectId },
     system: SYSTEM,
     parts: [{ text: `Timeline:\n${JSON.stringify(describeForAi(tl))}\n\nRequest: ${command}` }],
     schema: SCHEMA,
@@ -145,7 +146,7 @@ export async function planAiEdit(userId: string, tl: Timeline, command: string) 
         index: i,
       });
       // Nothing in the library/stock: generate the shot instead.
-      const a = pick.asset ?? (hasGemini() ? await generateImageAsset(userId, o.query ?? "", tl.aspect, words).catch(() => null) : null);
+      const a = pick.asset ?? (hasGemini() ? await generateImageAsset(userId, o.query ?? "", tl.aspect, words, projectId).catch(() => null) : null);
       if (!a) continue;
       const r: ResolvedVisual = {
         type: a.type === "video" ? "video" : "image",

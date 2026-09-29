@@ -22,13 +22,14 @@ async function imageBytes(url: string): Promise<{ data: string; mimeType: string
 }
 
 /** Filmable tags for an uploaded photo/video (from its thumbnail) so auto-matching can find it. */
-export async function autoTags(imageUrl: string | null | undefined): Promise<string[]> {
+export async function autoTags(imageUrl: string | null | undefined, userId: string): Promise<string[]> {
   if (!hasGemini() || !imageUrl) return [];
   const img = await imageBytes(imageUrl);
   if (!img) return [];
   try {
     const res = await Promise.race([
       geminiJson<{ tags: string[] }>({
+        usage: { feature: "tagging", userId },
         system: "You tag media for a video editor's search. Return 5-10 short lowercase tags: subjects, objects, setting, action, mood, colors. Single words or two-word phrases.",
         parts: [{ inlineData: img }, { text: "Tag this image." }],
         schema: { type: "object", properties: { tags: { type: "array", items: { type: "string" } } }, required: ["tags"] },

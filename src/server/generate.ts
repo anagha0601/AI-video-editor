@@ -2,7 +2,7 @@ import "server-only";
 import { nanoid } from "nanoid";
 import type { Aspect } from "@/lib/timeline/types";
 import { prisma } from "./db";
-import { geminiClient, geminiJson } from "./gemini";
+import { callGemini, geminiJson, type UsageCtx } from "./gemini";
 import { putObject } from "./storage";
 
 // Generative pieces for idea -> video: script writing (Gemini Flash), voiceover
@@ -44,9 +44,10 @@ async function tryModels<T>(models: string[], fn: (model: string) => Promise<T>)
 }
 
 /** Idea -> short-form voiceover script (hook first) sized to the requested length. */
-export async function writeScript(idea: string, seconds: number, tone: string) {
+export async function writeScript(idea: string, seconds: number, tone: string, usage: Omit<UsageCtx, "feature">) {
   const words = Math.round(seconds * 2.4);
   return geminiJson<{ title: string; script: string }>({
+    usage: { ...usage, feature: "script" },
     system:
       "You write voiceover scripts for short vertical videos (TikTok, Reels, Shorts). Open with a scroll-stopping hook in the first sentence, " +
       "keep sentences short and spoken (no stage directions, no emojis, no hashtags, no scene labels), and end with a clear payoff or call to action. " +
@@ -75,9 +76,9 @@ function wavFromPcm(pcm: Buffer, rate: number) {
 }
 
 /** Script -> spoken WAV via Gemini TTS. */
-export async function synthesizeSpeech(script: string, voice: string, tone: string): Promise<Buffer> {
+export async function synthesizeSpeech(script: string, voice: string, tone: string, usage: Omit<UsageCtx, "feature">): Promise<Buffer> {
   return tryModels(TTS_MODELS, async (model) => {
-    const res = await geminiClient().models.generateContent({
+    const res = await callGemini({ ...usage, feature: "tts" }, {
       model,
       // A bracketed style tag steers delivery without being spoken; a "Say it like…:" preamble gets read aloud.
       contents: [{ role: "user", parts: [{ text: `[${tone}, natural pace] ${script}` }] }],
@@ -99,9 +100,9 @@ export async function synthesizeSpeech(script: string, voice: string, tone: stri
 const RATIO: Record<Aspect, string> = { "9:16": "9:16", "16:9": "16:9", "1:1": "1:1" };
 
 /** Prompt -> image stored in the user's library (source "ai"). */
-export async function generateImageAsset(userId: string, prompt: string, aspect: Aspect, tags: string[] = []) {
+export async function generateImageAsset(userId: string, prompt: string, aspect: Aspect, tags: string[] = [], projectId?: string | null) {
   const { data, mime } = await tryModels(IMAGE_MODELS, async (model) => {
-    const res = await geminiClient().models.generateContent({
+    const res = await callGemini({ feature: "image", userId, projectId }, {
       model,
       contents: `${prompt}\n\nPhotorealistic, cinematic lighting, high detail. No text, captions, logos or watermarks in the image.`,
       config: { responseModalities: ["IMAGE"], imageConfig: { aspectRatio: RATIO[aspect] } },

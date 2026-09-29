@@ -74,6 +74,7 @@ The first transcription downloads the Whisper model (~140 MB for `base`) into th
 | `R2_PUBLIC_URL` | web, worker | Public base URL of the bucket (`https://pub-….r2.dev` or a custom domain) |
 | `R2_ENDPOINT` | optional | Override the S3 endpoint (any S3-compatible store works) |
 | `STORAGE_DRIVER` / `STORAGE_DIR` | optional | Force `local` or `r2`; folder for local storage (default `./storage`) |
+| `MONTHLY_BUDGET_USD` | web | Monthly Gemini budget. `/usage` shows progress; a banner appears across the app at 80% and 100% |
 | `WHISPER_MODEL` | worker | `tiny`, `base` (default), `small`, `medium`, `large-v3` |
 | `WHISPER_DEVICE`, `WHISPER_COMPUTE_TYPE` | worker | Default `auto` / `int8`. On a GPU box: `cuda` / `float16` |
 | `WEB_URL` | worker | Where to fetch relative media URLs (e.g. `/sample/voice.m4a`) when not on local disk |
@@ -88,6 +89,34 @@ The first transcription downloads the Whisper model (~140 MB for `base`) into th
 - **Captions** are derived from the voice clips + transcript, so they follow every trim, split, speed change and silence cut. Word edits are stored per word id.
 - **AI edits** (AI tab): Gemini returns high-level operations; the server resolves any new footage; the browser applies them to a copy, shows a summary + JSON-patch diff and previews it in the player. Apply = one undoable step.
 - **Versions**: named snapshots, restore (as an undoable change, with an automatic "before restore" snapshot), duplicate as a new project. Every render snapshots its exact timeline as a version, so the render history always shows what was exported.
+
+## API usage & cost
+
+Every Gemini request goes through `callGemini()` in `src/server/gemini.ts`, the only module that holds the SDK client. It saves one `ApiUsage` row per response: timestamp, model, feature (`script`, `scene_split`, `ai_edit`, `tagging`, `tts`, `image`), project, input/output/thinking tokens and `cost_usd`.
+
+- **Prices** are in `src/config/pricing.ts`, in USD per 1M tokens, per model; thinking tokens are billed at the output price. Edit that one file when Google changes rates. Rows already logged keep the cost they were saved with.
+- **`/usage`** (Usage in the header) shows:
+  - spend for today, this week, this month and all time (UTC days)
+  - a daily bar chart for the last 30 days, with a table view
+  - breakdowns by feature and by model
+  - a sortable cost-per-video table
+  - the monthly budget from `MONTHLY_BUDGET_USD`
+- Scripts are written before their project exists; their usage rows are linked to the project when it's created.
+
+## Gemini quick-import (manual, no API cost)
+
+Generate images in your personal Gemini account and bring them into the editor:
+
+1. **Open Gemini** (editor top bar) opens gemini.google.com in a window beside the editor.
+2. **Copy prompt**, on a selected scene in the Inspector or the copy icon on a timeline clip, copies that scene's visual hint as an image prompt with the aspect ratio added (e.g. "vertical 9:16").
+3. **Ctrl+V** anywhere in the editor: an image on the clipboard is uploaded (source `gemini_manual`) and replaces the selected scene's visual (or the scene under the playhead). You'll see "Image added to scene N".
+4. **Drag and drop** images from a browser tab or the desktop:
+   - onto a timeline clip: replaces that scene's visual
+   - onto an empty spot on a track: adds a clip there
+   - onto the preview: replaces the scene under the playhead
+
+   Images dragged from a web page are downloaded by the server (`/api/media/import`: public http(s) addresses only, images only, 20 MB max).
+5. Images placed on scenes get Ken Burns motion. The media library can filter by source: uploads, Pexels, Gemini (manual), AI generated.
 
 ## Timeline JSON schema
 

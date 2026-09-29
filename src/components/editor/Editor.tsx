@@ -14,6 +14,7 @@ import { cn } from "@/lib/utils";
 import { useEditor } from "./store";
 import { useAutosave, useShortcuts } from "./hooks";
 import { uploadAndAdd } from "./dnd";
+import { droppedImages, dropImageOnScene, hasDroppableImage, openGemini, usePasteImages } from "./quickimport";
 import { Player } from "./preview/Player";
 import { Timeline } from "./timeline/Timeline";
 import { Inspector } from "./panels/Inspector";
@@ -46,7 +47,7 @@ export function Editor({ project, timeline, revision }: { project: { id: string;
 
   if (!ready) {
     return (
-      <div className="flex h-dvh items-center justify-center">
+      <div className="flex h-full items-center justify-center">
         <Loader2 className="animate-spin text-muted-foreground" />
       </div>
     );
@@ -57,6 +58,7 @@ export function Editor({ project, timeline, revision }: { project: { id: string;
 function EditorInner() {
   useAutosave();
   useShortcuts();
+  usePasteImages();
   const panel = useEditor((s) => s.panel);
   const setPanel = useEditor((s) => s.setPanel);
   const selection = useEditor((s) => s.selection);
@@ -68,7 +70,7 @@ function EditorInner() {
   }, [selection, setPanel]);
 
   return (
-    <div className="flex h-dvh flex-col overflow-hidden">
+    <div className="flex h-full flex-col overflow-hidden">
       <TopBar />
       <div className="flex min-h-0 flex-1">
         <nav className="flex w-14 shrink-0 flex-col items-center gap-1 border-r py-2">
@@ -99,21 +101,24 @@ function EditorInner() {
         <main
           className={cn("relative min-w-0 flex-1 bg-[radial-gradient(ellipse_at_center,rgba(124,58,237,0.08),transparent_70%)] p-3", fileOver && "ring-2 ring-primary ring-inset")}
           onDragOver={(e) => {
-            if (!e.dataTransfer.types.includes("Files")) return;
+            if (!hasDroppableImage(e.dataTransfer)) return;
             e.preventDefault();
             setFileOver(true);
           }}
           onDragLeave={() => setFileOver(false)}
           onDrop={(e) => {
             setFileOver(false);
-            if (!e.dataTransfer.files.length) return;
+            const d = droppedImages(e.dataTransfer);
+            const files = [...e.dataTransfer.files];
             e.preventDefault();
-            uploadAndAdd(e.dataTransfer.files, null, useEditor.getState().playhead);
+            // Images replace the scene you're looking at; videos/audio are added at the playhead.
+            if (d.files.length || d.urls.length) dropImageOnScene(e.dataTransfer, null);
+            else if (files.length) uploadAndAdd(files, null, useEditor.getState().playhead);
           }}
         >
           <Player />
           {fileOver && (
-            <div className="pointer-events-none absolute inset-0 flex items-center justify-center bg-black/50 text-sm font-medium">Drop to add at the playhead</div>
+            <div className="pointer-events-none absolute inset-0 flex items-center justify-center bg-black/50 text-sm font-medium">Drop an image to put it on this scene</div>
           )}
         </main>
         <aside className="hidden w-80 shrink-0 overflow-y-auto border-l xl:block">
@@ -180,6 +185,14 @@ function TopBar() {
             </Button>
           </TooltipTrigger>
           <TooltipContent>Redo {redoLabel ?? ""} (⌘/Ctrl Shift Z)</TooltipContent>
+        </Tooltip>
+        <Tooltip>
+          <TooltipTrigger asChild>
+            <Button variant="ghost" size="sm" onClick={openGemini}>
+              <Sparkles /> <span className="hidden lg:inline">Open Gemini</span>
+            </Button>
+          </TooltipTrigger>
+          <TooltipContent className="max-w-64">Opens gemini.google.com beside the editor. Copy a scene prompt, generate there, then Ctrl+V the image onto the selected scene.</TooltipContent>
         </Tooltip>
         <VersionsDialog />
         <ExportDialog />

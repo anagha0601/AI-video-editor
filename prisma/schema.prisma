@@ -137,3 +137,21 @@ model RenderJob {
   @@index([status, createdAt])
   @@index([projectId, createdAt])
 }
+
+// One row per Gemini API response (every call goes through src/server/gemini.ts).
+model ApiUsage {
+  id             String   @id @default(cuid())
+  createdAt      DateTime @default(now())
+  model          String
+  feature        String // script | scene_split | ai_edit | tagging | tts | image
+  projectId      String?
+  userId         String?
+  inputTokens    Int      @default(0)
+  outputTokens   Int      @default(0)
+  thinkingTokens Int      @default(0)
+  costUsd        Float    @default(0)
+
+  @@index([createdAt])
+  @@index([projectId])
+  @@index([userId, createdAt])
+}

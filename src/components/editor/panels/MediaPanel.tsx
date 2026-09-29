@@ -29,6 +29,16 @@ export function MediaPanel() {
   const [tab, setTab] = useState("library");
   const assets = Object.values(assetsMap).sort((a, b) => b.createdAt.localeCompare(a.createdAt));
   const setAssets = (fn: (a: AssetDTO[] | null) => AssetDTO[] | null) => useEditor.getState().setAssets(fn(assets) ?? []);
+  // Uploads made inside the editor go straight onto the timeline (or into the clip being replaced).
+  const onUploaded = (a: AssetDTO) => {
+    const s = useEditor.getState();
+    if (s.replaceTarget) return replaceWith(a);
+    if (a.type === "audio") return toast.success(`${a.name} saved to your library`);
+    const at = a.type === "music" ? 0 : s.playhead;
+    addPayload({ kind: "asset", asset: a }, null, at)
+      .then(() => toast.success(`${a.name} added to the timeline at ${at.toFixed(1)}s`, { description: "Drag it to move, or undo with Ctrl+Z" }))
+      .catch((e) => toast.error(e.message));
+  };
   const add = (a: AssetDTO) => addPayload({ kind: "asset", asset: a }, null, useEditor.getState().playhead).catch((e) => toast.error(e.message));
 
   return (
@@ -59,6 +69,7 @@ export function MediaPanel() {
             setAssets={setAssets}
             onAdd={replaceTarget ? undefined : add}
             highlight={replaceTarget ?? undefined}
+            onUploaded={onUploaded}
             itemProps={(a) =>
               replaceTarget ? { onClick: () => replaceWith(a) } : a.type === "audio" && a.source === "sample" ? {} : dragProps({ kind: "asset", asset: a })
             }

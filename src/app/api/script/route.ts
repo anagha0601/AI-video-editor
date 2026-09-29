@@ -13,9 +13,12 @@ const body = z.object({
 
 /** Idea -> voiceover script (the user can edit it before narration). */
 export const POST = route(async (req: Request) => {
-  await requireUserId();
+  const userId = await requireUserId();
   if (!hasGemini()) throw new HttpError(400, "Writing scripts needs GEMINI_API_KEY");
   const parsed = body.safeParse(await req.json().catch(() => null));
   if (!parsed.success) throw new HttpError(400, parsed.error.issues[0]?.message ?? "Invalid idea");
-  return writeScript(parsed.data.idea, parsed.data.seconds, parsed.data.tone);
+  const usage = { userId, ids: [] as string[] };
+  const res = await writeScript(parsed.data.idea, parsed.data.seconds, parsed.data.tone, usage);
+  // The project doesn't exist yet; the client passes these ids on create so the cost is attributed to it.
+  return { ...res, usageIds: usage.ids };
 });

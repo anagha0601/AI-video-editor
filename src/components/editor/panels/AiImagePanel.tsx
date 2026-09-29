@@ -12,7 +12,7 @@ import { dragProps } from "../dnd";
 
 export async function generateImage(prompt: string, tags: string[] = []) {
   const aspect = useEditor.getState().timeline.aspect;
-  const { asset } = await api<{ asset: AssetDTO }>("/api/media/generate", { method: "POST", json: { prompt, aspect, tags } });
+  const { asset } = await api<{ asset: AssetDTO }>("/api/media/generate", { method: "POST", json: { prompt, aspect, tags, projectId: useEditor.getState().projectId } });
   const s = useEditor.getState();
   s.setAssets([asset, ...Object.values(s.assets)]);
   return asset;

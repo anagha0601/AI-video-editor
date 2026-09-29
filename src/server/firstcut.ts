@@ -20,7 +20,7 @@ export async function buildFirstCut(projectId: string) {
   const aspect = project.aspect as Aspect;
   const duration = voice.duration ?? transcript.duration ?? (words.length ? words[words.length - 1].end + 0.5 : 5);
 
-  const split = await splitScenes(words, duration, aspect);
+  const split = await splitScenes(words, duration, aspect, { projectId, userId: project.userId });
   const library = await prisma.mediaAsset.findMany({
     where: { userId: project.userId, type: { in: ["video", "image"] } },
     orderBy: { createdAt: "desc" },
@@ -65,7 +65,12 @@ export async function buildFirstCut(projectId: string) {
     let cursor = s.start;
     for (let shot = 0; shot < 3 && s.end - cursor > 0.1; shot++) {
       const dur = s.end - cursor;
-      const extra = { scene: i + 1, keywords: s.visual_keywords, name: `Scene ${i + 1}` };
+      const extra = {
+        scene: i + 1,
+        keywords: s.visual_keywords,
+        name: `Scene ${i + 1}`,
+        visualHint: `${s.image_prompt.replace(/[.\s]+$/, "")}${split.style ? `. Style: ${split.style}` : ""}`,
+      };
       const mine = shot === 0 ? assigned.get(i) : undefined;
       const pick = mine
         ? { asset: mine }
@@ -95,8 +100,8 @@ export async function buildFirstCut(projectId: string) {
   await pool(needsAi, 4, async ({ clip, scene }) => {
     try {
       const prompt = `${scene.image_prompt}${split.style ? `. Visual style: ${split.style}` : ""}`;
-      const a = await generateImageAsset(project.userId, prompt, aspect, scene.visual_keywords);
-      Object.assign(clip, clipFromAsset(a, clip.start, clip.duration, { scene: clip.scene, keywords: clip.keywords, name: `Scene ${clip.scene} · AI` }), {
+      const a = await generateImageAsset(project.userId, prompt, aspect, scene.visual_keywords, projectId);
+      Object.assign(clip, clipFromAsset(a, clip.start, clip.duration, { scene: clip.scene, keywords: clip.keywords, visualHint: clip.visualHint, name: `Scene ${clip.scene} · AI` }), {
         id: clip.id,
         kenBurns: { direction: (["in", "out", "left", "right"] as const)[(clip.scene ?? 0) % 4], amount: 0.12 },
       });
