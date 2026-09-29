@@ -1,20 +1,77 @@
 @import "tailwindcss";
+@import "tw-animate-css";
 
-@theme {
+@custom-variant dark (&:is(.dark *));
+
+/* Fonts used on the video canvas. The same TTFs are loaded by libass in the
+   worker (fontsdir=public/fonts), so preview and export draw identical glyphs. */
+@font-face { font-family: "RS Inter"; src: url("/fonts/Inter-ExtraBold.ttf") format("truetype"); font-display: block; }
+@font-face { font-family: "RS Montserrat"; src: url("/fonts/Montserrat-ExtraBold.ttf") format("truetype"); font-display: block; }
+@font-face { font-family: "RS Bebas"; src: url("/fonts/BebasNeue.ttf") format("truetype"); font-display: block; }
+@font-face { font-family: "RS Playfair"; src: url("/fonts/PlayfairDisplay-Bold.ttf") format("truetype"); font-display: block; }
+@font-face { font-family: "RS Marker"; src: url("/fonts/PermanentMarker.ttf") format("truetype"); font-display: block; }
+
+@theme inline {
   --font-sans: var(--font-inter), ui-sans-serif, system-ui, sans-serif;
-  --color-brand-400: #a78bfa;
-  --color-brand-500: #8b5cf6;
-  --color-brand-600: #7c3aed;
-  --color-accent-500: #ec4899;
+  --color-background: var(--background);
+  --color-foreground: var(--foreground);
+  --color-card: var(--card);
+  --color-card-foreground: var(--card-foreground);
+  --color-popover: var(--popover);
+  --color-popover-foreground: var(--popover-foreground);
+  --color-primary: var(--primary);
+  --color-primary-foreground: var(--primary-foreground);
+  --color-secondary: var(--secondary);
+  --color-secondary-foreground: var(--secondary-foreground);
+  --color-muted: var(--muted);
+  --color-muted-foreground: var(--muted-foreground);
+  --color-accent: var(--accent);
+  --color-accent-foreground: var(--accent-foreground);
+  --color-destructive: var(--destructive);
+  --color-border: var(--border);
+  --color-input: var(--input);
+  --color-ring: var(--ring);
+  --color-brand: var(--brand);
+  --color-brand-2: var(--brand-2);
+  --radius-sm: calc(var(--radius) - 4px);
+  --radius-md: calc(var(--radius) - 2px);
+  --radius-lg: var(--radius);
+  --radius-xl: calc(var(--radius) + 4px);
 }
 
+/* The studio is dark-only: video is judged against a dark surround. */
 :root {
   color-scheme: dark;
+  --radius: 0.625rem;
+  --background: oklch(0.145 0.004 286);
+  --foreground: oklch(0.97 0 0);
+  --card: oklch(0.185 0.005 286);
+  --card-foreground: oklch(0.97 0 0);
+  --popover: oklch(0.2 0.006 286);
+  --popover-foreground: oklch(0.97 0 0);
+  --primary: oklch(0.62 0.21 293);
+  --primary-foreground: oklch(0.99 0 0);
+  --secondary: oklch(0.26 0.006 286);
+  --secondary-foreground: oklch(0.97 0 0);
+  --muted: oklch(0.24 0.006 286);
+  --muted-foreground: oklch(0.7 0.015 286);
+  --accent: oklch(0.27 0.008 286);
+  --accent-foreground: oklch(0.97 0 0);
+  --destructive: oklch(0.64 0.21 22);
+  --border: oklch(1 0 0 / 10%);
+  --input: oklch(1 0 0 / 14%);
+  --ring: oklch(0.62 0.21 293);
+  --brand: oklch(0.62 0.21 293);
+  --brand-2: oklch(0.66 0.23 350);
 }
 
-body {
-  background: #09090b;
-  color: #fafafa;
+@layer base {
+  * {
+    @apply border-border outline-ring/50;
+  }
+  body {
+    @apply bg-background text-foreground;
+  }
 }
 
 .bg-grid {
@@ -31,21 +88,9 @@ body {
   color: transparent;
 }
 
-@utility btn {
-  @apply inline-flex items-center justify-center gap-2 rounded-xl px-4 py-2.5 text-sm font-semibold transition disabled:cursor-not-allowed disabled:opacity-50;
+.brand-gradient {
+  background-image: linear-gradient(90deg, var(--brand), var(--brand-2));
 }
-@utility btn-primary {
-  @apply btn bg-gradient-to-r from-brand-600 to-accent-500 text-white shadow-lg shadow-brand-600/25 hover:brightness-110;
-}
-@utility btn-ghost {
-  @apply btn border border-white/10 bg-white/5 text-zinc-200 hover:bg-white/10;
-}
-@utility input {
-  @apply w-full rounded-xl border border-white/10 bg-zinc-900/80 px-3.5 py-2.5 text-sm text-zinc-100 placeholder:text-zinc-500 outline-none transition focus:border-brand-500 focus:ring-2 focus:ring-brand-500/30;
-}
-@utility card {
-  @apply rounded-2xl border border-white/10 bg-zinc-900/60 backdrop-blur;
-}
-@utility chip {
-  @apply rounded-full border px-3 py-1.5 text-xs font-medium transition;
-}
+
+.no-scrollbar::-webkit-scrollbar { display: none; }
+.no-scrollbar { scrollbar-width: none; }

@@ -1,0 +1,41 @@
+import Link from "next/link";
+import { LogOut, Plus } from "lucide-react";
+import { signOut } from "@/auth";
+import { Button } from "@/components/ui/button";
+import { Logo } from "./Logo";
+
+export function AppHeader({ email }: { email?: string | null }) {
+  return (
+    <header className="sticky top-0 z-30 border-b bg-background/80 backdrop-blur">
+      <div className="mx-auto flex h-14 max-w-7xl items-center gap-3 px-4 sm:px-6">
+        <Logo href="/dashboard" />
+        <nav className="ml-2 flex items-center gap-1 text-sm">
+          <Link href="/dashboard" className="rounded-md px-2.5 py-1.5 text-muted-foreground hover:bg-muted hover:text-foreground">
+            Projects
+          </Link>
+          <Link href="/media" className="rounded-md px-2.5 py-1.5 text-muted-foreground hover:bg-muted hover:text-foreground">
+            Media
+          </Link>
+        </nav>
+        <div className="ml-auto flex items-center gap-2">
+          <Button size="sm" asChild className="hidden sm:inline-flex">
+            <Link href="/projects/new">
+              <Plus /> New video
+            </Link>
+          </Button>
+          <span className="hidden max-w-48 truncate text-xs text-muted-foreground md:block">{email}</span>
+          <form
+            action={async () => {
+              "use server";
+              await signOut({ redirectTo: "/" });
+            }}
+          >
+            <Button variant="ghost" size="icon" type="submit" aria-label="Sign out" title="Sign out">
+              <LogOut />
+            </Button>
+          </form>
+        </div>
+      </div>
+    </header>
+  );
+}

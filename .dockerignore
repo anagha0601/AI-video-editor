@@ -1,0 +1,8 @@
+node_modules
+.next
+storage
+worker/.venv
+**/__pycache__
+.git
+.env
+prisma/dev.db*

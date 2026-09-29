@@ -1,0 +1,56 @@
+# Local stack: Postgres + web (Next.js) + worker (faster-whisper + ffmpeg).
+#   docker compose up --build            # everything
+#   docker compose up -d db              # just Postgres (run web/worker natively)
+#   docker compose up -d db worker       # Postgres + worker, web via `npm run dev`
+# Files live in ./storage (shared by web and worker) unless R2_* vars are set.
+services:
+  db:
+    image: postgres:16-alpine
+    environment:
+      POSTGRES_USER: reelsmith
+      POSTGRES_PASSWORD: reelsmith
+      POSTGRES_DB: reelsmith
+    ports:
+      - "5433:5432"
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U reelsmith"]
+      interval: 3s
+      retries: 20
+
+  web:
+    build:
+      context: .
+      dockerfile: Dockerfile.web
+    env_file: .env
+    environment:
+      DATABASE_URL: postgresql://reelsmith:reelsmith@db:5432/reelsmith
+      STORAGE_DIR: /data/storage
+    ports:
+      - "3000:3000"
+    volumes:
+      - ./storage:/data/storage
+    depends_on:
+      db:
+        condition: service_healthy
+
+  worker:
+    build:
+      context: .
+      dockerfile: worker/Dockerfile
+    env_file: .env
+    environment:
+      DATABASE_URL: postgresql://reelsmith:reelsmith@db:5432/reelsmith
+      STORAGE_DIR: /data/storage
+      WEB_URL: http://web:3000
+    volumes:
+      - ./storage:/data/storage
+      - whisper-cache:/root/.cache/huggingface
+    depends_on:
+      db:
+        condition: service_healthy
+
+volumes:
+  pgdata:
+  whisper-cache:

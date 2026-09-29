@@ -2,64 +2,132 @@ generator client {
   provider = "prisma-client-js"
 }
 
-// SQLite for local dev. For production, switch provider to "postgresql"
-// and point DATABASE_URL at Neon/Supabase/Railway Postgres (see README).
+// Postgres everywhere: docker-compose locally, Neon in production.
+// The Python worker (worker/db.py) reads/writes VoiceTrack, RenderJob, MediaAsset,
+// Project and TimelineVersion with raw SQL, so renaming columns here means updating it too.
 datasource db {
-  provider = "sqlite"
+  provider = "postgresql"
   url      = env("DATABASE_URL")
 }
 
 model User {
-  id               String    @id @default(cuid())
-  email            String    @unique
-  passwordHash     String
-  name             String?
-  plan             String    @default("free") // "free" | "pro"
-  stripeCustomerId String?   @unique
-  stripeSubId      String?
-  createdAt        DateTime  @default(now())
-  projects         Project[]
-  assets           Asset[]
+  id           String       @id @default(cuid())
+  email        String       @unique
+  name         String?
+  passwordHash String
+  createdAt    DateTime     @default(now())
+  projects     Project[]
+  assets       MediaAsset[]
+  renders      RenderJob[]
 }
 
 model Project {
-  id          String   @id @default(cuid())
-  userId      String
-  user        User     @relation(fields: [userId], references: [id], onDelete: Cascade)
-  title       String
-  prompt      String   // the user's original idea or script
-  mode        String   @default("idea") // "idea" | "script"
-  style       String   @default("educational")
-  aspect      String   @default("9:16") // "9:16" | "1:1" | "16:9"
-  voice       String   @default("default")
-  status      String   @default("draft") // "draft" | "ready" | "exported"
-  hook        String   @default("")
-  caption     String   @default("") // social caption for posting
-  hashtags    String   @default("") // space-separated
-  scenes      String   @default("[]") // JSON: Scene[]
-  durationSec Int      @default(0)
-  assetIds    String   @default("[]") // JSON: ids of the user photos attached to this video
-  createdAt   DateTime @default(now())
-  updatedAt   DateTime @updatedAt
+  id            String            @id @default(cuid())
+  userId        String
+  user          User              @relation(fields: [userId], references: [id], onDelete: Cascade)
+  title         String
+  aspect        String            @default("9:16") // "9:16" | "16:9" | "1:1"
+  // draft -> transcribing -> transcribed -> building -> ready -> rendered; or failed
+  status        String            @default("draft")
+  statusMessage String?
+  thumbnailUrl  String?
+  duration      Float             @default(0)
+  isSample      Boolean           @default(false)
+  buildStartedAt DateTime?
+  createdAt     DateTime          @default(now())
+  updatedAt     DateTime          @updatedAt
+  voice         VoiceTrack?
+  timeline      Timeline?
+  versions      TimelineVersion[]
+  renders       RenderJob[]
 
-  @@index([userId, createdAt])
+  @@index([userId, updatedAt])
 }
 
-// User-uploaded photos and video clips. Stored in the DB (photos resized client-side
-// to ~1280px JPEG) so they survive serverless deploys without extra object storage.
-// Clips also keep a JPEG poster frame for thumbnails and for the AI to look at.
-model Asset {
+model VoiceTrack {
+  id             String    @id @default(cuid())
+  projectId      String    @unique
+  project        Project   @relation(fields: [projectId], references: [id], onDelete: Cascade)
+  assetId        String?
+  url            String
+  duration       Float?
+  language       String?
+  transcriptJson Json? // { language, duration, words: [{ id, text, start, end }] }
+  status         String    @default("queued") // queued | processing | done | failed
+  error          String?
+  attempts       Int       @default(0)
+  lockedAt       DateTime?
+  createdAt      DateTime  @default(now())
+  updatedAt      DateTime  @updatedAt
+
+  @@index([status, createdAt])
+}
+
+model Timeline {
+  id        String   @id @default(cuid())
+  projectId String   @unique
+  project   Project  @relation(fields: [projectId], references: [id], onDelete: Cascade)
+  json      Json
+  revision  Int      @default(1)
+  updatedAt DateTime @updatedAt
+}
+
+model TimelineVersion {
+  id        String      @id @default(cuid())
+  projectId String
+  project   Project     @relation(fields: [projectId], references: [id], onDelete: Cascade)
+  name      String
+  kind      String      @default("manual") // manual | render | first-cut | before-restore
+  json      Json
+  createdAt DateTime    @default(now())
+  renders   RenderJob[]
+
+  @@index([projectId, createdAt])
+}
+
+model MediaAsset {
   id        String   @id @default(cuid())
   userId    String
   user      User     @relation(fields: [userId], references: [id], onDelete: Cascade)
-  kind      String   @default("image") // "image" | "video"
-  mime      String
-  width     Int
-  height    Int
-  duration  Float    @default(0) // seconds, clips only
-  data      Bytes
-  poster    Bytes?
+  type      String // video | image | audio (voice) | music
+  source    String   @default("upload") // upload | recording | pexels | sample
+  key       String? // storage key when we host the file
+  url       String
+  thumbUrl  String?
+  name      String
+  mime      String?
+  duration  Float?
+  width     Int?
+  height    Int?
+  tags      String[]
+  meta      Json? // { peaks, peaksPerSec, pexelsId, author, hasAudio }
   createdAt DateTime @default(now())
 
-  @@index([userId, createdAt])
+  @@index([userId, type, createdAt])
+}
+
+model RenderJob {
+  id         String          @id @default(cuid())
+  projectId  String
+  project    Project         @relation(fields: [projectId], references: [id], onDelete: Cascade)
+  versionId  String
+  version    TimelineVersion @relation(fields: [versionId], references: [id], onDelete: Cascade)
+  userId     String
+  user       User            @relation(fields: [userId], references: [id], onDelete: Cascade)
+  quality    String          @default("1080p") // 720p | 1080p
+  status     String          @default("queued") // queued | processing | done | failed
+  progress   Float           @default(0)
+  outputUrl  String?
+  outputKey  String?
+  thumbUrl   String?
+  duration   Float?
+  error      String?
+  attempts   Int             @default(0)
+  lockedAt   DateTime?
+  startedAt  DateTime?
+  finishedAt DateTime?
+  createdAt  DateTime        @default(now())
+
+  @@index([status, createdAt])
+  @@index([projectId, createdAt])
 }

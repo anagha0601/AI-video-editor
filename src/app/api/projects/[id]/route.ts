@@ -1,82 +1,49 @@
-import { NextResponse } from "next/server";
 import { z } from "zod";
-import { db } from "@/lib/db";
-import { getOwnedProject, jsonError, serializeProject, withUser } from "@/lib/api";
-import { sceneDuration } from "@/lib/timing";
+import { prisma } from "@/server/db";
+import { maybeBuildFirstCut } from "@/server/firstcut";
+import { HttpError, ownedProject, requireUserId, route, type Ctx } from "@/server/http";
+import { deleteObject } from "@/server/storage";
 
-type Ctx = { params: Promise<{ id: string }> };
+export const maxDuration = 60;
 
-export async function GET(_req: Request, { params }: Ctx) {
-  return withUser(async (user) => {
-    const project = await getOwnedProject(user.id, (await params).id);
-    if (!project) return jsonError("Not found", 404);
-    return NextResponse.json({ project: serializeProject(project) });
+/**
+ * Status for the processing screen. When the worker has finished transcribing,
+ * the first request to see it builds the first cut (Gemini + visual matching).
+ */
+export const GET = route(async (_req: Request, ctx: Ctx<{ id: string }>) => {
+  const userId = await requireUserId();
+  const { id } = await ctx.params;
+  await ownedProject(id, userId);
+  await maybeBuildFirstCut(id);
+  const project = await prisma.project.findUniqueOrThrow({
+    where: { id },
+    select: { id: true, title: true, status: true, statusMessage: true, aspect: true, thumbnailUrl: true, duration: true },
   });
-}
-
-const SceneSchema = z.object({
-  id: z.string(),
-  narration: z.string().max(600),
-  onScreen: z.string().max(120),
-  visualQuery: z.string().max(120),
-  durationSec: z.number().min(1).max(20).optional(),
-  mediaUrl: z.string().nullable().optional(),
-  mediaType: z.enum(["image", "video"]).optional(),
-  credit: z.string().nullable().optional(),
-  customDuration: z.number().min(1).max(20).nullable().optional(),
-  clipStart: z.number().min(0).max(36000).optional(),
-  clipDuration: z.number().min(0).max(36000).optional(),
-  clipAudio: z.boolean().optional(),
-  clipVolume: z.number().min(0).max(1).optional(),
-  palette: z.tuple([z.string(), z.string()]),
-  emoji: z.string().optional(),
+  const voice = await prisma.voiceTrack.findUnique({ where: { projectId: id }, select: { status: true, error: true, createdAt: true, updatedAt: true } });
+  return {
+    project,
+    voice: voice && { ...voice, queuedFor: voice.status === "queued" ? (Date.now() - voice.updatedAt.getTime()) / 1000 : 0 },
+  };
 });
 
-const PatchBody = z.object({
-  title: z.string().trim().min(1).max(120).optional(),
-  caption: z.string().max(2200).optional(),
-  hashtags: z.array(z.string()).max(30).optional(),
-  status: z.enum(["draft", "ready", "exported"]).optional(),
-  scenes: z.array(SceneSchema).min(1).max(20).optional(),
-  assetIds: z.array(z.string()).max(40).optional(),
+const patch = z.object({ title: z.string().trim().min(1).max(100) });
+
+export const PATCH = route(async (req: Request, ctx: Ctx<{ id: string }>) => {
+  const userId = await requireUserId();
+  const { id } = await ctx.params;
+  await ownedProject(id, userId);
+  const parsed = patch.safeParse(await req.json().catch(() => null));
+  if (!parsed.success) throw new HttpError(400, "Invalid title");
+  await prisma.project.update({ where: { id }, data: { title: parsed.data.title } });
+  return { ok: true };
 });
 
-export async function PATCH(req: Request, { params }: Ctx) {
-  return withUser(async (user) => {
-    const id = (await params).id;
-    const project = await getOwnedProject(user.id, id);
-    if (!project) return jsonError("Not found", 404);
-    const parsed = PatchBody.safeParse(await req.json().catch(() => null));
-    if (!parsed.success) return jsonError(parsed.error.issues[0]?.message ?? "Invalid input");
-    const { scenes, hashtags, assetIds, ...rest } = parsed.data;
-
-    // Keep each scene's timing in sync with its narration (or hand-set length) after edits.
-    const normalized = scenes?.map((s) => ({ ...s, durationSec: sceneDuration(s) }));
-    const updated = await db.project.update({
-      where: { id },
-      data: {
-        ...rest,
-        ...(assetIds ? { assetIds: JSON.stringify(assetIds) } : {}),
-        ...(hashtags ? { hashtags: hashtags.map((h) => h.replace(/^#/, "")).join(" ") } : {}),
-        ...(normalized
-          ? {
-              scenes: JSON.stringify(normalized),
-              hook: normalized[0].narration,
-              durationSec: Math.round(normalized.reduce((a, s) => a + s.durationSec, 0)),
-            }
-          : {}),
-      },
-    });
-    return NextResponse.json({ project: serializeProject(updated) });
-  });
-}
-
-export async function DELETE(_req: Request, { params }: Ctx) {
-  return withUser(async (user) => {
-    const id = (await params).id;
-    const project = await getOwnedProject(user.id, id);
-    if (!project) return jsonError("Not found", 404);
-    await db.project.delete({ where: { id } });
-    return NextResponse.json({ ok: true });
-  });
-}
+export const DELETE = route(async (_req: Request, ctx: Ctx<{ id: string }>) => {
+  const userId = await requireUserId();
+  const { id } = await ctx.params;
+  await ownedProject(id, userId);
+  const renders = await prisma.renderJob.findMany({ where: { projectId: id }, select: { outputKey: true } });
+  await prisma.project.delete({ where: { id } });
+  await Promise.all(renders.filter((r) => r.outputKey).map((r) => deleteObject(r.outputKey!)));
+  return { ok: true };
+});

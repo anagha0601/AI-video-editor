@@ -1,0 +1,7 @@
+faster-whisper>=1.1
+psycopg[binary]>=3.2
+boto3>=1.35
+requests>=2.32
+numpy>=1.26
+# Static ffmpeg for running the worker outside Docker (Windows/macOS); the Docker image uses apt ffmpeg.
+imageio-ffmpeg>=0.5

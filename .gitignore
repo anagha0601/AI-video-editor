@@ -46,3 +46,10 @@ next-env.d.ts
 !.env.example
 *.db
 *.db-journal
+
+# local media storage (STORAGE_DRIVER=local) and the worker's Python env
+/storage
+/worker/.venv
+__pycache__/
+# raw TTS source for the sample narration (voice.m4a is committed)
+/public/sample/voice.wav

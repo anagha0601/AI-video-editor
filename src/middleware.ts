@@ -1,15 +1,9 @@
-import { NextResponse, type NextRequest } from "next/server";
+import NextAuth from "next-auth";
+import { authConfig } from "./auth.config";
 
-// Cheap cookie-presence gate; pages and API routes verify the session signature themselves.
-export function middleware(req: NextRequest) {
-  if (!req.cookies.has("rs_session")) {
-    const url = new URL("/login", req.url);
-    url.searchParams.set("next", req.nextUrl.pathname);
-    return NextResponse.redirect(url);
-  }
-  return NextResponse.next();
-}
+// Edge middleware: redirects signed-out visitors away from the studio pages.
+export default NextAuth(authConfig).auth;
 
 export const config = {
-  matcher: ["/dashboard/:path*", "/create/:path*", "/projects/:path*", "/billing/:path*"],
+  matcher: ["/dashboard/:path*", "/projects/:path*", "/media/:path*"],
 };

@@ -1,59 +1,63 @@
 import Link from "next/link";
-import { getSessionUserId } from "@/lib/auth";
-import { Logo } from "@/components/Logo";
-import { HeroDemo } from "@/components/HeroDemo";
-import { Pricing } from "@/components/Pricing";
+import { ArrowRight, Captions, Download, Mic, Scissors, SlidersHorizontal, Sparkles, Wand2, Layers, History, Music } from "lucide-react";
+import { auth } from "@/auth";
+import { Logo } from "@/components/site/Logo";
+import { Button } from "@/components/ui/button";
 
 const STEPS = [
-  { n: "1", title: "Drop in an idea or script", body: "One line like “3 habits of calm people” or a full script you already wrote." },
-  { n: "2", title: "AI builds the video", body: "Claude writes a hook-first script, splits it into scenes, and picks visuals for each beat." },
-  { n: "3", title: "Tweak, export, post", body: "Edit any line, swap visuals, then export a captioned vertical video with a ready-made caption." },
+  { icon: Mic, title: "Record", body: "Upload a voiceover or record it right in the browser. Your voice sets the pace." },
+  { icon: Wand2, title: "Auto-edit", body: "Whisper transcribes every word with timings; Gemini splits scenes and picks visuals — your clips first, stock second." },
+  { icon: SlidersHorizontal, title: "Fine-tune", body: "A real multi-track timeline: trim, split, transitions, text, captions, music ducking — or just tell the AI what to change." },
+  { icon: Download, title: "Download", body: "Render a captioned MP4 in 720p or 1080p that matches the preview. Re-render as often as you like." },
 ];
 
 const FEATURES = [
-  { icon: "🪝", title: "Hook-first scripts", body: "Every video opens with a scroll-stopping line in the first two seconds." },
-  { icon: "💬", title: "Animated captions", body: "Word-by-word karaoke captions — 85% of people watch on mute." },
-  { icon: "🎞️", title: "Auto visuals", body: "Stock photos matched to each scene with smooth Ken Burns motion." },
-  { icon: "🎙️", title: "AI voiceover", body: "Natural narration timed to every scene (Pro)." },
-  { icon: "📐", title: "Every format", body: "9:16 for TikTok, Reels & Shorts, plus 1:1 and 16:9 on Pro." },
-  { icon: "#️⃣", title: "Post copy included", body: "A caption and hashtags written for the video, one click to copy." },
+  { icon: Captions, title: "Word-by-word captions", body: "Four styles, editable per word, and they stay synced after every trim." },
+  { icon: Scissors, title: "One-click silence trim", body: "Cut every pause over 0.7s from the whole video; visuals and captions follow." },
+  { icon: Sparkles, title: "AI edit commands", body: "“Make scene 3 moodier.” See the proposed change as a diff, then apply or reject. Always undoable." },
+  { icon: Layers, title: "Multi-track editor", body: "Video, voice, music, text and caption tracks with snapping, zoom and keyboard shortcuts." },
+  { icon: Music, title: "Music that ducks", body: "Background music dips under your voice automatically, plus volume keyframes." },
+  { icon: History, title: "Versions & history", body: "Unlimited undo, autosave, named snapshots, and every render tied to its exact version." },
 ];
 
 const FAQ = [
-  { q: "Do I need editing skills?", a: "No. You type an idea, we produce the full video. Editing is optional and as simple as changing text." },
-  { q: "Who owns the videos?", a: "You do. Use them on any platform, including for commercial work." },
-  { q: "Where are videos rendered?", a: "Right in your browser, so exports are instant to start and never sit in a queue." },
-  { q: "Can I cancel anytime?", a: "Yes — manage or cancel your subscription from the billing page in one click." },
+  { q: "Do I need editing skills?", a: "No. You get a finished first cut automatically. The editor is there when you want control, and the AI command box handles most tweaks in plain English." },
+  { q: "Can I use my own footage?", a: "Yes — upload videos and photos to your library. They're tagged automatically and preferred over stock when matching scenes." },
+  { q: "Are there watermarks or limits?", a: "No watermark, no usage caps, unlimited edits and re-renders." },
+  { q: "Will the export look like the preview?", a: "Yes. The preview and the renderer read the same timeline JSON with the same fonts, color math, transitions and caption layout." },
+  { q: "What languages work?", a: "Transcription auto-detects the language (Whisper), so captions work for most major languages." },
+  { q: "Who owns the videos?", a: "You do. Stock clips come from Pexels under its free license." },
 ];
 
 export default async function Landing() {
-  const signedIn = Boolean(await getSessionUserId());
-  const primary = signedIn ? { href: "/create", label: "Open the studio" } : { href: "/signup", label: "Make a video free" };
+  const session = await auth();
+  const signedIn = Boolean(session?.user?.id);
+  const cta = signedIn ? { href: "/dashboard", label: "Open your projects" } : { href: "/signup", label: "Make a video — free" };
 
   return (
     <div className="overflow-x-hidden">
-      <header className="sticky top-0 z-30 border-b border-white/5 bg-zinc-950/70 backdrop-blur">
+      <header className="sticky top-0 z-30 border-b border-white/5 bg-background/70 backdrop-blur">
         <div className="mx-auto flex h-16 max-w-6xl items-center justify-between px-4 sm:px-6">
           <Logo />
           <nav className="flex items-center gap-2 text-sm sm:gap-4">
-            <a href="#how" className="hidden text-zinc-400 hover:text-white sm:block">
+            <a href="#how" className="hidden text-muted-foreground hover:text-foreground sm:block">
               How it works
             </a>
-            <a href="#pricing" className="hidden text-zinc-400 hover:text-white sm:block">
-              Pricing
+            <a href="#faq" className="hidden text-muted-foreground hover:text-foreground sm:block">
+              FAQ
             </a>
             {signedIn ? (
-              <Link href="/dashboard" className="btn-ghost py-2">
-                Dashboard
-              </Link>
+              <Button asChild size="sm" variant="secondary">
+                <Link href="/dashboard">Dashboard</Link>
+              </Button>
             ) : (
               <>
-                <Link href="/login" className="px-2 text-zinc-300 hover:text-white">
+                <Link href="/login" className="px-2 text-muted-foreground hover:text-foreground">
                   Sign in
                 </Link>
-                <Link href="/signup" className="btn-primary py-2">
-                  Start free
-                </Link>
+                <Button asChild size="sm">
+                  <Link href="/signup">Start free</Link>
+                </Button>
               </>
             )}
           </nav>
@@ -61,104 +65,103 @@ export default async function Landing() {
       </header>
 
       <section className="bg-grid relative">
-        <div className="pointer-events-none absolute inset-x-0 top-0 h-[500px] bg-gradient-to-b from-brand-600/15 via-accent-500/5 to-transparent" />
-        <div className="relative mx-auto grid max-w-6xl items-center gap-14 px-4 py-16 sm:px-6 sm:py-24 lg:grid-cols-[1.2fr_1fr]">
+        <div className="pointer-events-none absolute inset-x-0 top-0 h-[520px] bg-gradient-to-b from-violet-600/15 via-pink-500/5 to-transparent" />
+        <div className="relative mx-auto grid max-w-6xl items-center gap-12 px-4 py-14 sm:px-6 sm:py-20 lg:grid-cols-[1.15fr_1fr]">
           <div className="text-center lg:text-left">
-            <span className="inline-flex items-center gap-2 rounded-full border border-white/10 bg-white/5 px-3 py-1 text-xs text-zinc-300">
-              <span className="h-1.5 w-1.5 rounded-full bg-emerald-400" /> AI video for TikTok, Reels & Shorts
+            <span className="inline-flex items-center gap-2 rounded-full border border-white/10 bg-white/5 px-3 py-1 text-xs text-muted-foreground">
+              <span className="size-1.5 rounded-full bg-emerald-400" /> Voice-first AI video editor
             </span>
-            <h1 className="mt-6 text-4xl font-extrabold leading-[1.05] tracking-tight sm:text-6xl">
-              Turn any idea into a <span className="text-gradient">ready-to-post video</span> in minutes.
+            <h1 className="mt-6 text-4xl leading-[1.05] font-extrabold tracking-tight sm:text-6xl">
+              Talk. Get a <span className="text-gradient">ready-to-post video</span>. Then make it yours.
             </h1>
-            <p className="mx-auto mt-6 max-w-xl text-lg text-zinc-400 lg:mx-0">
-              ReelSmith writes the script, picks the visuals, times the captions and voiceover, and hands you a finished short. No
-              editing skills, no timeline, no stock-footage rabbit holes.
+            <p className="mx-auto mt-6 max-w-xl text-lg text-muted-foreground lg:mx-0">
+              Record your voiceover and ReelSmith cuts a first edit with matching visuals and word-by-word captions — then hands you a real timeline editor with unlimited edits.
             </p>
             <div className="mt-8 flex flex-col items-center gap-3 sm:flex-row sm:justify-center lg:justify-start">
-              <Link href={primary.href} className="btn-primary px-6 py-3 text-base">
-                ✨ {primary.label}
-              </Link>
-              <a href="#how" className="btn-ghost px-6 py-3 text-base">
-                See how it works
-              </a>
+              <Button asChild size="lg" className="brand-gradient px-6 text-white">
+                <Link href={cta.href}>
+                  {cta.label} <ArrowRight />
+                </Link>
+              </Button>
+              <span className="text-sm text-muted-foreground">No watermark · no caps</span>
             </div>
-            <p className="mt-4 text-sm text-zinc-500">3 free videos every month · No credit card</p>
           </div>
-          <HeroDemo />
+          <div className="relative mx-auto w-full max-w-[300px]">
+            <div className="absolute -inset-8 rounded-[3rem] bg-gradient-to-tr from-violet-600/30 to-pink-500/20 blur-3xl" />
+            <div className="relative overflow-hidden rounded-[2rem] border border-white/15 bg-black p-2 shadow-2xl">
+              <video
+                src="/sample/sample-output.mp4"
+                poster="/sample/sample-poster.jpg"
+                autoPlay
+                muted
+                loop
+                playsInline
+                className="aspect-[9/16] w-full rounded-[1.5rem] bg-zinc-900 object-cover"
+              />
+            </div>
+            <p className="mt-3 text-center text-xs text-muted-foreground">Sample output: a 48-second voiceover, auto-edited.</p>
+          </div>
         </div>
       </section>
 
       <section id="how" className="mx-auto max-w-6xl px-4 py-20 sm:px-6">
-        <h2 className="text-center text-3xl font-bold sm:text-4xl">From blank page to posted in 3 steps</h2>
-        <div className="mt-12 grid gap-4 md:grid-cols-3">
-          {STEPS.map((s) => (
-            <div key={s.n} className="card p-6">
-              <span className="grid h-10 w-10 place-items-center rounded-xl bg-gradient-to-br from-brand-600 to-accent-500 font-bold">{s.n}</span>
-              <h3 className="mt-4 text-lg font-semibold">{s.title}</h3>
-              <p className="mt-2 text-zinc-400">{s.body}</p>
+        <h2 className="text-center text-3xl font-bold tracking-tight">How it works</h2>
+        <div className="mt-12 grid gap-4 sm:grid-cols-2 lg:grid-cols-4">
+          {STEPS.map((s, i) => (
+            <div key={s.title} className="rounded-2xl border bg-card/60 p-6">
+              <div className="flex items-center gap-3">
+                <span className="brand-gradient flex size-9 items-center justify-center rounded-xl text-white">
+                  <s.icon className="size-4" />
+                </span>
+                <span className="text-xs text-muted-foreground">Step {i + 1}</span>
+              </div>
+              <h3 className="mt-4 font-semibold">{s.title}</h3>
+              <p className="mt-2 text-sm text-muted-foreground">{s.body}</p>
             </div>
           ))}
         </div>
       </section>
 
-      <section className="mx-auto max-w-6xl px-4 py-12 sm:px-6">
-        <h2 className="text-center text-3xl font-bold sm:text-4xl">Everything a faceless channel needs</h2>
-        <p className="mx-auto mt-3 max-w-2xl text-center text-zinc-400">
-          Built for creators, marketers, and small businesses who need to post daily without hiring an editor.
-        </p>
-        <div className="mt-12 grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
+      <section className="border-y bg-card/30">
+        <div className="mx-auto grid max-w-6xl gap-x-8 gap-y-10 px-4 py-20 sm:grid-cols-2 sm:px-6 lg:grid-cols-3">
           {FEATURES.map((f) => (
-            <div key={f.title} className="rounded-2xl border border-white/10 p-6 transition hover:border-white/20 hover:bg-white/[0.02]">
-              <div className="text-2xl">{f.icon}</div>
+            <div key={f.title}>
+              <f.icon className="size-5 text-violet-400" />
               <h3 className="mt-3 font-semibold">{f.title}</h3>
-              <p className="mt-1.5 text-sm text-zinc-400">{f.body}</p>
+              <p className="mt-1.5 text-sm text-muted-foreground">{f.body}</p>
             </div>
           ))}
         </div>
       </section>
 
-      <section id="pricing" className="mx-auto max-w-6xl px-4 py-20 sm:px-6">
-        <h2 className="text-center text-3xl font-bold sm:text-4xl">Simple pricing</h2>
-        <p className="mb-12 mt-3 text-center text-zinc-400">Start free. Upgrade when you&apos;re posting every day.</p>
-        <Pricing
-          cta={(plan) => (
-            <Link href={signedIn ? "/billing" : "/signup"} className={plan === "pro" ? "btn-primary w-full" : "btn-ghost w-full"}>
-              {plan === "pro" ? "Go Pro" : "Start free"}
-            </Link>
-          )}
-        />
-      </section>
-
-      <section className="mx-auto max-w-3xl px-4 py-12 sm:px-6">
-        <h2 className="mb-8 text-center text-3xl font-bold">Questions</h2>
-        <div className="space-y-3">
+      <section id="faq" className="mx-auto max-w-3xl px-4 py-20 sm:px-6">
+        <h2 className="text-center text-3xl font-bold tracking-tight">FAQ</h2>
+        <div className="mt-10 divide-y rounded-2xl border">
           {FAQ.map((f) => (
-            <details key={f.q} className="card group p-5">
+            <details key={f.q} className="group p-5 open:bg-card/40">
               <summary className="flex cursor-pointer list-none items-center justify-between font-medium">
                 {f.q}
-                <span className="text-zinc-500 transition group-open:rotate-45">+</span>
+                <span className="text-muted-foreground transition group-open:rotate-45">+</span>
               </summary>
-              <p className="mt-3 text-zinc-400">{f.a}</p>
+              <p className="mt-3 text-sm text-muted-foreground">{f.a}</p>
             </details>
           ))}
         </div>
       </section>
 
-      <section className="mx-auto max-w-6xl px-4 py-20 sm:px-6">
-        <div className="relative overflow-hidden rounded-3xl bg-gradient-to-br from-brand-600 to-accent-500 px-6 py-14 text-center">
-          <div className="bg-grid absolute inset-0 opacity-40" />
-          <div className="relative">
-            <h2 className="text-3xl font-bold sm:text-4xl">Your next video is one sentence away.</h2>
-            <Link href={primary.href} className="btn mt-8 bg-white px-6 py-3 text-base text-zinc-900 hover:bg-zinc-100">
-              {primary.label} →
+      <section className="px-4 pb-24 sm:px-6">
+        <div className="mx-auto max-w-4xl rounded-3xl border bg-gradient-to-br from-violet-600/20 via-card to-pink-500/10 p-10 text-center">
+          <h2 className="text-3xl font-bold tracking-tight">Your voice is the script.</h2>
+          <p className="mt-3 text-muted-foreground">Record once, edit forever. Start with our sample project if you don&apos;t have a recording handy.</p>
+          <Button asChild size="lg" className="mt-8">
+            <Link href={cta.href}>
+              {cta.label} <ArrowRight />
             </Link>
-          </div>
+          </Button>
         </div>
       </section>
 
-      <footer className="border-t border-white/5 py-8 text-center text-sm text-zinc-500">
-        © {new Date().getFullYear()} ReelSmith · Made for creators
-      </footer>
+      <footer className="border-t py-8 text-center text-xs text-muted-foreground">© {new Date().getFullYear()} ReelSmith · Stock media by Pexels</footer>
     </div>
   );
 }

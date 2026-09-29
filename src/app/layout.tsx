@@ -1,19 +1,24 @@
 import type { Metadata } from "next";
 import { Inter } from "next/font/google";
+import { Toaster } from "@/components/ui/sonner";
+import { TooltipProvider } from "@/components/ui/tooltip";
 import "./globals.css";
 
 const inter = Inter({ variable: "--font-inter", subsets: ["latin"] });
 
 export const metadata: Metadata = {
-  title: "ReelSmith — Turn any idea into a ready-to-post video",
+  title: "ReelSmith — voice to ready-to-post video",
   description:
-    "AI writes the script, picks the visuals, adds captions and voiceover, and exports a vertical video for TikTok, Reels, and Shorts in minutes.",
+    "Upload or record your voiceover. ReelSmith transcribes it, cuts a first edit with matching visuals and word-by-word captions, then gives you a real timeline editor with AI edit commands.",
 };
 
 export default function RootLayout({ children }: Readonly<{ children: React.ReactNode }>) {
   return (
-    <html lang="en">
-      <body className={`${inter.variable} font-sans antialiased`}>{children}</body>
+    <html lang="en" className="dark">
+      <body className={`${inter.variable} font-sans antialiased`}>
+        <TooltipProvider delayDuration={300}>{children}</TooltipProvider>
+        <Toaster position="bottom-right" richColors />
+      </body>
     </html>
   );
 }

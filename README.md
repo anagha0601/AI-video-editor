@@ -1,133 +1,189 @@
 # ReelSmith
 
-Turn any idea or script into a ready-to-post short video. The AI writes a hook-first script, splits it into scenes, picks visuals, adds animated captions and an optional AI voiceover, and exports an MP4 for TikTok, Reels, and Shorts.
+Voice-first AI video editor. Upload or record a voiceover → **faster-whisper** transcribes it with word timings → **Gemini Flash** splits it into scenes with visual keywords → visuals are matched (your library first, **Pexels** second) → you get a first cut in a **multi-track timeline editor** with captions, transitions, text, music ducking, AI edit commands, versions — and export an MP4 from a **Python/ffmpeg worker** that matches the in-browser preview.
 
-**Stack:** Next.js 15 (App Router) · Tailwind CSS v4 · Prisma (SQLite locally, Postgres in production) · Groq, Gemini, or Claude API · Stripe (test mode) · Pexels (optional) · ElevenLabs (optional)
-
-## How it works
+No payments, no watermark, no usage caps.
 
 ```
-idea / script ──► POST /api/projects ──► Groq, Gemini, or Claude (structured storyboard JSON)
-                                     └─► Pexels image search per scene
-                          saved to DB as a Project with Scenes
-editor (browser) ──► <canvas> renderer: Ken Burns visuals, headline, karaoke captions
-export ──► MediaRecorder records the canvas (+ ElevenLabs voice track on Pro) ──► .mp4 / .webm
+browser ──presigned PUT──► R2 (or ./storage)                         ┌──────────── worker (Python) ───────────┐
+   │                                                                  │ polls Postgres (FOR UPDATE SKIP LOCKED)│
+   ├─ POST /api/projects/:id/voice ─► VoiceTrack(status=queued) ─────►│ faster-whisper → words + timings       │
+   │                                                                  │ normalize audio, waveform peaks        │
+   ├─ GET /api/projects/:id (poll) ◄─ status=transcribed ◄────────────│                                        │
+   │     └─► first cut: Gemini scenes + visual matching → Timeline    │                                        │
+   │                                                                  │                                        │
+   ├─ editor: timeline JSON ⇄ autosave (PUT /timeline), versions      │                                        │
+   └─ POST /renders ─► TimelineVersion + RenderJob(queued) ──────────►│ timeline JSON → ffmpeg filter graph    │
+                         ◄──────── progress / output URL ─────────────│ + ASS captions (libass) → MP4 → R2     │
+                                                                      └────────────────────────────────────────┘
 ```
 
-Video rendering runs **in the user's browser** (`src/lib/renderer.ts`), so you don't need a render farm, FFmpeg, or a job queue. Exports render in real time: a 30-second video takes about 30 seconds.
+## Stack
 
-## Features
-
-- **Core loop:** idea or script → AI storyboard → live preview → edit → export MP4
-- **Your own photos:** upload up to 12 photos with your idea. Gemini and Claude look at them and write the script around what they show, then assign each photo to the best scene. Photos are resized in the browser and stored in the database, so no extra storage service is needed
-- **Editor:** edit on-screen text and voiceover lines, reorder, add, or delete scenes, swap visuals, autosave
-- **Library:** search (title, prompt, caption), filter by status and style, sort, delete
-- **Post copy:** an AI-written caption and hashtags you can copy in one click
-- **Auth:** email and password (bcrypt), with a signed JWT in an httpOnly cookie
-- **Billing:** the Free plan gives 3 videos a month, 9:16 only, with a watermark. Pro ($19/mo) gives unlimited videos, every format, no watermark, and AI voiceover. Payments go through Stripe Checkout and the Customer Portal, with webhooks.
-- **Graceful degradation:** every external service is optional, so the app works with zero API keys:
-
-| Missing key | What happens |
+| Piece | What |
 |---|---|
-| `GROQ_API_KEY` / `GEMINI_API_KEY` / `ANTHROPIC_API_KEY` | A template-based "demo" storyboard is used instead of the AI |
-| `PEXELS_API_KEY` | Scenes get animated gradient backgrounds and an emoji |
-| `ELEVENLABS_API_KEY` | Preview uses the browser's built-in voice; exports have captions and no voice |
-| `STRIPE_SECRET_KEY` | The upgrade button shows a "not configured" message |
+| Web | Next.js 15 (App Router), Tailwind v4, shadcn/ui (Radix), zustand |
+| DB | Postgres via Prisma (docker-compose locally, Neon in prod) |
+| Auth | Auth.js v5, email + password (bcrypt), JWT sessions |
+| LLM | Gemini Flash (`@google/genai`) — scene split, media auto-tags, AI edit commands |
+| Transcription | faster-whisper in the worker (word-level timestamps) |
+| Visuals | your uploads (matched by tags) → Pexels video → Pexels photo → gradient card |
+| Preview | `<canvas>` compositor driven by the timeline JSON (`src/components/editor/preview`) |
+| Render | Python worker builds an ffmpeg filter graph from the same JSON (`worker/render.py`), captions/text via ASS + libass |
+| Storage | Cloudflare R2 with presigned uploads; falls back to a local `./storage` folder |
 
-## Local setup
+## Run it locally
 
-Requirements: Node 20 or newer.
+Requirements: Node 20+, Docker (for Postgres, optionally the worker), Python 3.11+ if you run the worker natively.
 
 ```bash
 npm install
-cp .env.example .env          # then fill in the values below
-npx prisma db push            # creates prisma/dev.db
-npm run dev                   # http://localhost:3000
+cp .env.example .env              # fill in AUTH_SECRET, GEMINI_API_KEY, PEXELS_API_KEY
+docker compose up -d db           # Postgres on localhost:5433
+npx prisma db push                # create tables
+npm run dev                       # http://localhost:3000
 ```
 
-Run `npm run check:ai` to confirm your AI key works before using the app.
+Then start the worker — either natively:
+
+```bash
+python -m venv worker/.venv
+worker/.venv/bin/pip install -r worker/requirements.txt      # Windows: worker\.venv\Scripts\pip
+worker/.venv/bin/python worker/main.py                        # reads ../.env
+```
+
+…or in Docker (ffmpeg + Python included): `docker compose up -d --build worker`.
+Everything in containers: `docker compose up --build` (web on :3000).
+
+With no R2 variables set, uploads and renders go to `./storage` (served by `/api/files/...`), which the native web app, the native worker and the compose containers all share.
+
+**Try it without a recording:** Dashboard → *Try a sample project*. It uses a bundled narration with a precomputed transcript, so it opens in the editor even before the worker is running (you still need the worker to export).
+
+The first transcription downloads the Whisper model (~140 MB for `base`) into the Hugging Face cache.
 
 ## Environment variables
 
-| Variable | Required | Description |
+| Variable | Needed by | Description |
 |---|---|---|
-| `DATABASE_URL` | yes | `file:./dev.db` locally; a Postgres URL in production |
-| `AUTH_SECRET` | yes | Long random string used to sign session cookies (`openssl rand -base64 32`) |
-| `APP_URL` | yes | Public base URL, e.g. `http://localhost:3000`. Used for Stripe redirects |
-| `GROQ_API_KEY` | recommended | Free key from console.groq.com/keys. Enables AI scripts. Takes priority over Gemini and Claude |
-| `GROQ_MODEL` | no | Default `llama-3.3-70b-versatile` |
-| `GEMINI_API_KEY` | no | Use Gemini instead (only when `GROQ_API_KEY` is empty) |
-| `GEMINI_MODEL` | no | Default `gemini-flash-lite-latest` |
-| `ANTHROPIC_API_KEY` | no | Use Claude instead (only when both keys above are empty) |
-| `ANTHROPIC_MODEL` | no | Overrides the Claude model (default `claude-opus-5`) |
-| `PEXELS_API_KEY` | recommended | Free key from pexels.com/api for stock visuals |
-| `ELEVENLABS_API_KEY` | no | Enables AI voiceover baked into Pro exports |
-| `ELEVENLABS_VOICE_ID` | no | Voice to use (default "Rachel") |
-| `STRIPE_SECRET_KEY` | for billing | `sk_test_...` |
-| `STRIPE_WEBHOOK_SECRET` | for billing | `whsec_...` from the Stripe CLI or Dashboard |
-| `STRIPE_PRICE_ID` | no | A recurring price ID. If omitted, an inline $19/mo price is used |
+| `DATABASE_URL` | web, worker | Postgres URL. Local: `postgresql://reelsmith:reelsmith@localhost:5433/reelsmith`. Neon: the pooled connection string |
+| `AUTH_SECRET` | web | Auth.js secret (`npx auth secret`); also signs local upload URLs |
+| `GEMINI_API_KEY` | web | Gemini API key (paid tier recommended). Without it: heuristic scene split, no auto-tags, AI commands disabled |
+| `GEMINI_MODEL` | web | Default `gemini-flash-latest` (falls back to `gemini-3.8-flash`) |
+| `PEXELS_API_KEY` | web | Free Pexels key. Without it, unmatched scenes get gradient cards and the Stock tab is disabled |
+| `R2_ACCOUNT_ID`, `R2_ACCESS_KEY_ID`, `R2_SECRET_ACCESS_KEY`, `R2_BUCKET` | web, worker | Cloudflare R2 credentials. Leave empty for local storage |
+| `R2_PUBLIC_URL` | web, worker | Public base URL of the bucket (`https://pub-….r2.dev` or a custom domain) |
+| `R2_ENDPOINT` | optional | Override the S3 endpoint (any S3-compatible store works) |
+| `STORAGE_DRIVER` / `STORAGE_DIR` | optional | Force `local` or `r2`; folder for local storage (default `./storage`) |
+| `WHISPER_MODEL` | worker | `tiny`, `base` (default), `small`, `medium`, `large-v3` |
+| `WHISPER_DEVICE`, `WHISPER_COMPUTE_TYPE` | worker | Default `auto` / `int8`. On a GPU box: `cuda` / `float16` |
+| `WEB_URL` | worker | Where to fetch relative media URLs (e.g. `/sample/voice.m4a`) when not on local disk |
+| `FFMPEG_BIN`, `FONTS_DIR`, `X264_PRESET`, `WORKER_POLL_SECONDS` | worker | Optional overrides |
 
-### Stripe test mode
+## Using the editor
 
-1. Copy your test secret key into `STRIPE_SECRET_KEY`.
-2. Forward webhooks locally:
-   ```bash
-   stripe listen --forward-to localhost:3000/api/stripe/webhook
+- **Timeline**: video/overlay tracks, voice, music, text and captions. Drag to move (across tracks too), drag edges to trim, snapping to clip edges, the playhead and word boundaries (magnet button), Ctrl/⌘ + wheel to zoom.
+- **Shortcuts**: Space play/pause · S split (selected clips, or everything under the playhead) · Del delete · Shift+Del ripple delete · ⌘/Ctrl+Z undo · ⌘/Ctrl+Shift+Z (or Ctrl+Y) redo · ⌘/Ctrl+D duplicate · ←/→ step one frame (Shift: 1 s).
+- **Ripple delete** closes the gap on that track. On the **voice** track it removes that time range from the whole video, so visuals and captions stay in sync.
+- **Trim silences** (Audio tab) removes every pause longer than 0.7 s (adjustable) from the whole timeline.
+- **Captions** are derived from the voice clips + transcript, so they follow every trim, split, speed change and silence cut. Word edits are stored per word id.
+- **AI edits** (AI tab): Gemini returns high-level operations; the server resolves any new footage; the browser applies them to a copy, shows a summary + JSON-patch diff and previews it in the player. Apply = one undoable step.
+- **Versions**: named snapshots, restore (as an undoable change, with an automatic "before restore" snapshot), duplicate as a new project. Every render snapshots its exact timeline as a version, so the render history always shows what was exported.
+
+## Timeline JSON schema
+
+One JSON document per project (`Timeline.json`) is the source of truth for both the preview and the render. Types: `src/lib/timeline/types.ts`; derived math: `src/lib/timeline/derive.ts`, mirrored in `worker/timeline.py`.
+
+```jsonc
+{
+  "version": 1,
+  "aspect": "9:16",               // "9:16" | "16:9" | "1:1"
+  "width": 1080, "height": 1920,  // design resolution; all px values use it. 720p renders scale uniformly
+  "fps": 30,
+  "background": "#000000",
+  "duckLevel": 0.2,               // music gain while the voice speaks
+  "captions": {
+    "enabled": true,
+    "style": "bold",              // bold | karaoke | minimal | boxed
+    "y": 0.72,                    // center, fraction of frame height
+    "size": 76,                   // px
+    "maxWords": 4,
+    "edits": { "ab12cd_7": "PRODUCTIVITY" }   // word id -> replacement ("" hides the word)
+  },
+  "transcripts": {                // voice asset id -> whisper words, in SOURCE seconds
+    "ab12cd…": { "words": [{ "id": "ab12cd_0", "text": "Most", "start": 0.12, "end": 0.38 }] }
+  },
+  "tracks": [                     // listed top -> bottom; upper video tracks draw on top
+    { "id": "t_…", "kind": "captions", "name": "Captions", "clips": [] },
+    { "id": "t_…", "kind": "text", "name": "Text", "clips": [
+      { "id": "c_…", "type": "text", "start": 0, "duration": 3, "text": "Do less,\non purpose",
+        "preset": "title", "animIn": "pop", "animOut": "fade",        // none|fade|slide-up|pop / none|fade|slide-down|pop
+        "style": { "font": "montserrat", "size": 120, "color": "#FFFFFF", "background": null,
+                   "outline": 8, "outlineColor": "#000000", "shadow": 0, "uppercase": true, "x": 0.5, "y": 0.2 } }
+    ]},
+    { "id": "t_…", "kind": "video", "name": "Video", "clips": [
+      { "id": "c_…", "type": "video",            // video | image | color
+        "start": 0, "duration": 3.2,              // timeline seconds
+        "in": 1.5, "speed": 1,                    // source in-point; source out = in + duration*speed
+        "src": "https://…mp4", "assetId": "…", "thumb": "…", "name": "Scene 1 · city night",
+        "srcDuration": 12.4, "srcWidth": 1080, "srcHeight": 1920, "hasAudio": true,
+        "volume": 1, "muted": true, "fadeIn": 0, "fadeOut": 0,
+        "transition": { "type": "crossfade", "duration": 0.5 },  // cut|crossfade|slide|zoom; enters from the adjacent previous clip
+        "transform": { "fit": "cover", "scale": 1, "x": 0, "y": 0 }, // cover|contain, extra zoom, center offset (fraction of frame)
+        "filters": { "brightness": 1, "contrast": 1, "saturation": 1, "preset": "none" }, // none|warm|cool|bw
+        "kenBurns": null,                          // images: { "direction": "in|out|left|right|up|down", "amount": 0.15 }
+        "colors": null,                            // color clips: ["#from", "#to"] diagonal gradient
+        "keywords": ["city", "night"], "scene": 1 }
+    ]},
+    { "id": "t_…", "kind": "voice", "name": "Voice", "clips": [
+      { "id": "c_…", "type": "audio", "src": "…/voice.m4a", "assetId": "ab12cd…", "name": "Voiceover",
+        "start": 0, "duration": 48.1, "in": 0, "speed": 1, "volume": 1, "muted": false, "fadeIn": 0, "fadeOut": 0 }
+    ]},
+    { "id": "t_…", "kind": "music", "name": "Music", "clips": [
+      { "id": "c_…", "type": "audio", "src": "…/track.mp3", "start": 0, "duration": 48, "in": 0, "speed": 1,
+        "volume": 0.5, "muted": false, "fadeIn": 0, "fadeOut": 1.5,
+        "duck": true, "keyframes": [{ "t": 40, "gain": 1 }, { "t": 46, "gain": 0.2 }] }   // t relative to clip start
+    ]}
+  ]
+}
+```
+
+Rendering rules both sides follow:
+
+- **Frames**: a clip covers frames `round(start*fps)` to `round(end*fps)`. Videos shorter than their clip hold the last frame.
+- **Placement**: `cover` or `contain` fit × `scale`, centered, offset by `x*W`, `y*H`.
+- **Color**: per channel `v*brightness*contrast + 0.5*(1-contrast)`, then a 3×3 matrix (CSS saturate × preset). Preview: SVG `feComponentTransfer` + `feColorMatrix`. Render: `lutrgb` + `colorchannelmixer`.
+- **Ken Burns**: zoom window `z` at position `(fx, fy)` of the free space, from `kenBurnsAt()`. Render: `zoompan` on a 2× canvas.
+- **Transitions**: the previous clip holds its last frame while the next one enters, matching ffmpeg `xfade` (`fade`, `slideleft`, `zoomin`).
+- **Text**: line height = `(asc + desc) × px` from each font's OS/2 win metrics, block centered on `(x, y)`. The fonts in `public/fonts` are used by both the browser and libass.
+- **Captions**: words mapped through voice clips → lines (≤ `maxWords`, ≤ N chars, break on pauses > 0.6 s and at sentence ends) → the active word is highlighted from its start until the next word starts.
+- **Audio**: gain = volume × keyframes × linear fades × ducking. Ducking is the speech intervals (words, merged when gaps are < 0.6 s) with 0.25 s ramps.
+
+## Deploy
+
+**Database — Neon.** Create a project and copy the pooled connection string into `DATABASE_URL`. Run `npx prisma db push` once from your machine against it.
+
+**Storage — Cloudflare R2.**
+1. Create a bucket, then enable public access (the r2.dev subdomain or a custom domain) → `R2_PUBLIC_URL`.
+2. Create an R2 API token with Object Read & Write → `R2_ACCESS_KEY_ID` / `R2_SECRET_ACCESS_KEY`, plus your `R2_ACCOUNT_ID` and `R2_BUCKET`.
+3. Add a bucket **CORS** policy so browsers can upload directly and read audio for waveforms:
+   ```json
+   [{ "AllowedOrigins": ["https://your-app.vercel.app", "http://localhost:3000"],
+      "AllowedMethods": ["GET", "PUT", "HEAD"], "AllowedHeaders": ["*"], "MaxAgeSeconds": 3600 }]
    ```
-   Put the printed `whsec_...` into `STRIPE_WEBHOOK_SECRET`.
-3. Upgrade from `/billing` using card `4242 4242 4242 4242`, any future date, and any CVC.
 
-Upgrades also activate right away without the webhook, because the billing page confirms the Checkout session when Stripe redirects back. The webhook handles renewals, cancellations, and failed payments.
+**Web — Vercel.** Import the repo. Set `DATABASE_URL`, `AUTH_SECRET`, `GEMINI_API_KEY`, `PEXELS_API_KEY` and the `R2_*` vars. The build runs `prisma generate && next build`. The first-cut build and AI edits run inside route handlers (`maxDuration` 60 s). Rendering never runs on Vercel.
 
-To let users cancel or update their card, enable the **Customer Portal** in the Stripe Dashboard under Settings → Billing → Customer portal.
+**Worker — Railway or Fly.io**, from `worker/Dockerfile` (build context = repo root):
+- Railway: New service → from repo → set *Dockerfile path* to `worker/Dockerfile`, add the env vars (`DATABASE_URL` should be Neon's direct, non-pooled URL; the `R2_*` vars; `WHISPER_MODEL`; `WEB_URL=https://your-app.vercel.app`).
+- Fly.io: `fly launch --dockerfile worker/Dockerfile --no-deploy`, then `fly secrets set DATABASE_URL=… R2_…=… WEB_URL=…` and `fly deploy`. Give it ≥ 2 GB RAM (`fly scale memory 2048`) for Whisper + ffmpeg.
+- Scale by running more workers: jobs are claimed with `FOR UPDATE SKIP LOCKED`, and stale jobs (worker died) are retried after 20 minutes, up to 3 attempts.
 
-## Deploying
-
-SQLite files don't persist on serverless hosts, so production uses Postgres.
-
-### Option A: Vercel + Neon (recommended)
-
-1. Create a free Postgres database on [Neon](https://neon.tech) and copy the connection string.
-2. In `prisma/schema.prisma`, change `provider = "sqlite"` to `provider = "postgresql"`.
-3. Push the repo to GitHub and import it in Vercel.
-4. Set every environment variable from the table above. Set `APP_URL` to your Vercel URL.
-5. Create the tables once from your machine:
-   ```bash
-   DATABASE_URL="postgres://..." npx prisma db push
-   ```
-6. In Stripe, go to Developers → Webhooks and add an endpoint at `https://YOUR_DOMAIN/api/stripe/webhook` for these events:
-   `checkout.session.completed`, `customer.subscription.updated`, `customer.subscription.deleted`.
-   Put its signing secret into `STRIPE_WEBHOOK_SECRET` and redeploy.
-
-The `build` script runs `prisma generate` automatically.
-
-### Option B: Railway / Render / Fly
-
-Add a Postgres plugin, make the same schema change, set the env vars, and use `npm run build` and `npm start`.
-
-## Project structure
+## Project layout
 
 ```
-src/
-  app/
-    page.tsx                  landing page
-    (auth)/login, signup      auth pages
-    (app)/dashboard           library (history, search, filter)
-    (app)/create              idea/script composer
-    (app)/projects/[id]       editor + preview + export
-    (app)/billing             plans, checkout, portal
-    api/                      auth, projects, media proxy, tts, stripe
-  components/                 UI (Editor, Player, Composer, ProjectLibrary…)
-  lib/
-    ai.ts                     Groq/Gemini/Claude storyboard generation (+ demo fallback)
-    renderer.ts               canvas video engine + MediaRecorder export
-    auth.ts, stripe.ts, media.ts, usage.ts, plans.ts
-prisma/schema.prisma
+src/lib/timeline/     types, derive (shared math), ops (edit operations), ai (AI ops), factory
+src/components/editor/ Player (canvas preview), Timeline, panels (Media, Text, Captions, Audio, AI, Inspector), store
+src/server/           prisma, storage (R2/local), gemini, pexels, scenes, visuals, first cut, AI edit planner
+src/app/api/          projects, voice, timeline, versions, renders, media, uploads, pexels, files (local storage)
+worker/               main loop, transcribe (faster-whisper), render (ffmpeg graph), ass (captions/text), timeline (mirror)
 ```
-
-## Notes and limits
-
-- **Export format:** Chrome and Edge record MP4 (H.264). Firefox records WebM, which TikTok and YouTube accept but Instagram may not.
-- **Keep the tab visible while exporting.** Browsers throttle rendering in background tabs.
-- **Search on Postgres is case-sensitive.** To change that, add `mode: "insensitive"` to the `contains` filters in `src/app/api/projects/route.ts`.
-- **Usage quota:** counts projects created this calendar month. "Regenerate" doesn't count.

@@ -1,0 +1,93 @@
+"""Postgres access for the worker (tables are defined by prisma/schema.prisma)."""
+from __future__ import annotations
+
+import os
+from urllib.parse import parse_qsl, urlencode, urlsplit, urlunsplit
+
+import psycopg
+from psycopg.rows import dict_row
+from psycopg.types.json import Jsonb
+
+# Prisma-only URL params that libpq rejects.
+_PRISMA_PARAMS = {"schema", "pgbouncer", "connection_limit", "pool_timeout", "socket_timeout", "statement_cache_size"}
+
+
+def _dsn() -> str:
+    url = os.environ["DATABASE_URL"]
+    parts = urlsplit(url)
+    q = [(k, v) for k, v in parse_qsl(parts.query) if k not in _PRISMA_PARAMS]
+    return urlunsplit(parts._replace(query=urlencode(q)))
+
+
+def connect():
+    return psycopg.connect(_dsn(), row_factory=dict_row, autocommit=True)
+
+
+STALE = "interval '20 minutes'"
+
+
+def claim_voice(conn):
+    return conn.execute(f"""
+        UPDATE "VoiceTrack" SET status='processing', "lockedAt"=now(), attempts=attempts+1, "updatedAt"=now()
+        WHERE id = (
+          SELECT id FROM "VoiceTrack"
+          WHERE (status='queued' OR (status='processing' AND "lockedAt" < now() - {STALE})) AND attempts < 3
+          ORDER BY "createdAt" FOR UPDATE SKIP LOCKED LIMIT 1)
+        RETURNING *""").fetchone()
+
+
+def claim_render(conn):
+    return conn.execute(f"""
+        UPDATE "RenderJob" SET status='processing', "lockedAt"=now(), "startedAt"=now(), attempts=attempts+1, progress=0
+        WHERE id = (
+          SELECT id FROM "RenderJob"
+          WHERE (status='queued' OR (status='processing' AND "lockedAt" < now() - {STALE})) AND attempts < 3
+          ORDER BY "createdAt" FOR UPDATE SKIP LOCKED LIMIT 1)
+        RETURNING *""").fetchone()
+
+
+def voice_done(conn, voice, *, url, duration, language, transcript, peaks):
+    with conn.transaction():
+        conn.execute("""UPDATE "VoiceTrack" SET status='done', url=%s, duration=%s, language=%s,
+                        "transcriptJson"=%s, error=NULL, "updatedAt"=now() WHERE id=%s""",
+                     (url, duration, language, Jsonb(transcript), voice["id"]))
+        if voice.get("assetId"):
+            conn.execute("""UPDATE "MediaAsset" SET url=%s, duration=%s, mime='audio/mp4',
+                            meta=COALESCE(meta, '{}'::jsonb) || %s WHERE id=%s""",
+                         (url, duration, Jsonb({"peaks": peaks, "peaksPerSec": 50}), voice["assetId"]))
+        conn.execute("""UPDATE "Project" SET status='transcribed', duration=%s, "statusMessage"=NULL, "updatedAt"=now()
+                        WHERE id=%s AND status IN ('transcribing','failed')""", (duration, voice["projectId"]))
+
+
+def voice_failed(conn, voice, error: str):
+    final = voice["attempts"] >= 3
+    conn.execute("""UPDATE "VoiceTrack" SET status=%s, error=%s, "updatedAt"=now() WHERE id=%s""",
+                 ("failed" if final else "queued", error[:2000], voice["id"]))
+    if final:
+        conn.execute("""UPDATE "Project" SET status='failed', "statusMessage"=%s, "updatedAt"=now() WHERE id=%s""",
+                     ("Transcription failed: " + error[:300], voice["projectId"]))
+
+
+def version_json(conn, version_id: str):
+    row = conn.execute('SELECT json FROM "TimelineVersion" WHERE id=%s', (version_id,)).fetchone()
+    return row["json"] if row else None
+
+
+def render_progress(conn, job_id: str, progress: float):
+    conn.execute('UPDATE "RenderJob" SET progress=%s, "lockedAt"=now() WHERE id=%s', (progress, job_id))
+
+
+def render_done(conn, job, *, url, key, thumb_url, duration):
+    with conn.transaction():
+        conn.execute("""UPDATE "RenderJob" SET status='done', progress=1, "outputUrl"=%s, "outputKey"=%s,
+                        "thumbUrl"=%s, duration=%s, error=NULL, "finishedAt"=now() WHERE id=%s""",
+                     (url, key, thumb_url, duration, job["id"]))
+        conn.execute("""UPDATE "Project" SET status='rendered', "thumbnailUrl"=COALESCE(%s, "thumbnailUrl"),
+                        "updatedAt"=now() WHERE id=%s AND status IN ('ready','rendered')""",
+                     (thumb_url, job["projectId"]))
+
+
+def render_failed(conn, job, error: str):
+    final = job["attempts"] >= 3 or "ffmpeg failed" in error
+    conn.execute("""UPDATE "RenderJob" SET status=%s, error=%s, "finishedAt"=now() WHERE id=%s""",
+                 ("failed" if final else "queued", error[:4000], job["id"]))
