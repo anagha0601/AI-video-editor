@@ -45,16 +45,20 @@ model Project {
   @@index([userId, createdAt])
 }
 
-// User-uploaded photos. Stored in the DB (resized client-side to ~1280px JPEG)
-// so they survive serverless deploys without extra object storage.
+// User-uploaded photos and video clips. Stored in the DB (photos resized client-side
+// to ~1280px JPEG) so they survive serverless deploys without extra object storage.
+// Clips also keep a JPEG poster frame for thumbnails and for the AI to look at.
 model Asset {
   id        String   @id @default(cuid())
   userId    String
   user      User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  kind      String   @default("image") // "image" | "video"
   mime      String
   width     Int
   height    Int
+  duration  Float    @default(0) // seconds, clips only
   data      Bytes
+  poster    Bytes?
   createdAt DateTime @default(now())
 
   @@index([userId, createdAt])

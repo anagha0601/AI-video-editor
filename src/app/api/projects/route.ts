@@ -58,9 +58,9 @@ export async function POST(req: Request) {
       });
     }
 
-    const { ids: photoIds, photos } = await loadPhotos(user.id, input.assetIds);
+    const { refs, photos } = await loadPhotos(user.id, input.assetIds);
     const board = await generateStoryboard({ ...input, photos });
-    const scenes = await attachVisuals(board.scenes, photoIds, input.aspect);
+    const scenes = await attachVisuals(board.scenes, refs, input.aspect);
 
     const project = await db.project.create({
       data: {
@@ -75,7 +75,7 @@ export async function POST(req: Request) {
         caption: board.caption,
         hashtags: board.hashtags.join(" "),
         scenes: JSON.stringify(scenes),
-        assetIds: JSON.stringify(photoIds),
+        assetIds: JSON.stringify(refs.map((r) => r.id)),
         durationSec: Math.round(scenes.reduce((a, s) => a + s.durationSec, 0)),
       },
     });

@@ -88,7 +88,7 @@ export function Composer({
             className="input resize-y text-base leading-relaxed"
             placeholder={
               photos.length && mode === "idea"
-                ? "What should the video say about your photos? e.g. “Our weekend in Goa: best beaches and food”"
+                ? "What should the video say about your photos and clips? e.g. “Our weekend in Goa: best beaches and food”"
                 : mode === "idea"
                 ? "What's your video about? e.g. “5 psychology tricks that make people like you instantly”"
                 : "Paste your script. We'll split it into scenes, find visuals, and time the captions."

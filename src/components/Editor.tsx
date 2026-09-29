@@ -4,20 +4,28 @@ import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { useCallback, useEffect, useRef, useState } from "react";
 import type { ProjectDTO } from "@/lib/api";
-import { ASPECTS, type Scene } from "@/lib/types";
-import { estimateDuration } from "@/lib/timing";
+import { ASPECTS, assetUrl, posterUrl, type AssetRef, type Scene } from "@/lib/types";
+import { sceneDuration } from "@/lib/timing";
 import { exportVideo } from "@/lib/renderer";
-import { uploadPhoto } from "@/lib/upload";
+import { MEDIA_ACCEPT, uploadMedia } from "@/lib/upload";
 import { Player, type PlayerHandle } from "./Player";
 
-type Props = { initial: ProjectDTO; pro: boolean; stockEnabled: boolean; voiceEnabled: boolean };
+type Props = { initial: ProjectDTO; assets: AssetRef[]; pro: boolean; stockEnabled: boolean; voiceEnabled: boolean };
 type SaveState = "saved" | "saving" | "dirty" | "error";
 
-export function Editor({ initial, pro, stockEnabled, voiceEnabled }: Props) {
+// Scene fields for showing one of the user's uploads.
+function mediaPatch(ref: AssetRef): Partial<Scene> {
+  return ref.kind === "video"
+    ? { mediaUrl: assetUrl(ref.id), mediaType: "video", credit: null, clipStart: 0, clipDuration: ref.duration, clipAudio: false, clipVolume: 1 }
+    : { mediaUrl: assetUrl(ref.id), mediaType: "image", credit: null };
+}
+
+export function Editor({ initial, assets: initialAssets, pro, stockEnabled, voiceEnabled }: Props) {
   const router = useRouter();
   const player = useRef<PlayerHandle>(null);
   const [project, setProject] = useState(initial);
   const [scenes, setScenes] = useState<Scene[]>(initial.scenes);
+  const [assets, setAssets] = useState<AssetRef[]>(initialAssets);
   const [tab, setTab] = useState<"scenes" | "post">("scenes");
   const [active, setActive] = useState(0);
   const [save, setSave] = useState<SaveState>("saved");
@@ -64,7 +72,7 @@ export function Editor({ initial, pro, stockEnabled, voiceEnabled }: Props) {
   }, []);
 
   function updateScenes(next: Scene[]) {
-    const timed = next.map((s) => ({ ...s, durationSec: estimateDuration(s.narration) }));
+    const timed = next.map((s) => ({ ...s, durationSec: sceneDuration(s) }));
     setScenes(timed);
     queue({ scenes: timed });
   }
@@ -115,7 +123,7 @@ export function Editor({ initial, pro, stockEnabled, voiceEnabled }: Props) {
     const data = await res.json().catch(() => ({}));
     setBusy(null);
     if (!res.ok) return setError({ message: data.error ?? "Couldn't find a visual" });
-    updateScene(i, { mediaUrl: data.url, credit: data.credit });
+    updateScene(i, { mediaUrl: data.url, mediaType: "image", credit: data.credit });
   }
 
   async function uploadForScene(i: number, file: File | undefined) {
@@ -123,11 +131,14 @@ export function Editor({ initial, pro, stockEnabled, voiceEnabled }: Props) {
     setBusy(`upload-${i}`);
     setError(null);
     try {
-      const photo = await uploadPhoto(file);
-      const assetIds = [...project.assetIds, photo.id];
+      const upload = await uploadMedia(file);
+      const ref: AssetRef = { id: upload.id, kind: upload.kind, duration: upload.duration };
+      const assetIds = [...project.assetIds, ref.id];
       setProject((p) => ({ ...p, assetIds }));
+      setAssets((a) => [...a, ref]);
       queue({ assetIds });
-      updateScene(i, { mediaUrl: photo.url, credit: null });
+      updateScene(i, mediaPatch(ref));
+      player.current?.seekToScene(i);
     } catch (e) {
       setError({ message: e instanceof Error ? e.message : "Upload failed" });
     } finally {
@@ -365,25 +376,36 @@ export function Editor({ initial, pro, stockEnabled, voiceEnabled }: Props) {
                       </button>
                     )}
                     {s.mediaUrl && (
-                      <button onClick={() => updateScene(i, { mediaUrl: null, credit: null })} className="btn-ghost shrink-0" title="Use gradient background">
+                      <button
+                        onClick={() => updateScene(i, { mediaUrl: null, mediaType: undefined, credit: null })}
+                        className="btn-ghost shrink-0"
+                        title="Use gradient background"
+                      >
                         Clear
                       </button>
                     )}
                   </div>
                   <div className="mt-2 flex flex-wrap items-center gap-1.5">
-                    {project.assetIds.map((id, k) => {
-                      const url = `/api/assets/${id}`;
+                    {assets.map((ref, k) => {
+                      const url = assetUrl(ref.id);
                       return (
                         <button
-                          key={id}
-                          onClick={() => updateScene(i, { mediaUrl: url, credit: null })}
-                          className={`h-10 w-10 overflow-hidden rounded-md ring-2 transition ${
+                          key={ref.id}
+                          onClick={() => {
+                            if (s.mediaUrl === url) return;
+                            updateScene(i, mediaPatch(ref));
+                            player.current?.seekToScene(i);
+                          }}
+                          className={`relative h-10 w-10 overflow-hidden rounded-md ring-2 transition ${
                             s.mediaUrl === url ? "ring-brand-500" : "ring-transparent opacity-70 hover:opacity-100"
                           }`}
-                          title={`Use photo ${k + 1}`}
+                          title={ref.kind === "video" ? `Use clip ${k + 1} (${ref.duration.toFixed(1)}s)` : `Use photo ${k + 1}`}
                         >
                           {/* eslint-disable-next-line @next/next/no-img-element */}
-                          <img src={url} alt="" className="h-full w-full object-cover" />
+                          <img src={posterUrl(ref.id)} alt="" className="h-full w-full object-cover" />
+                          {ref.kind === "video" && (
+                            <span className="absolute inset-0 grid place-items-center bg-black/30 text-[10px] text-white">▶</span>
+                          )}
                         </button>
                       );
                     })}
@@ -392,10 +414,10 @@ export function Editor({ initial, pro, stockEnabled, voiceEnabled }: Props) {
                         busy === `upload-${i}` ? "pointer-events-none opacity-50" : ""
                       }`}
                     >
-                      {busy === `upload-${i}` ? "Uploading…" : "↑ Upload photo"}
+                      {busy === `upload-${i}` ? "Uploading…" : "↑ Upload photo or clip"}
                       <input
                         type="file"
-                        accept="image/jpeg,image/png,image/webp"
+                        accept={MEDIA_ACCEPT}
                         hidden
                         onChange={(e) => {
                           uploadForScene(i, e.target.files?.[0]);
@@ -405,6 +427,16 @@ export function Editor({ initial, pro, stockEnabled, voiceEnabled }: Props) {
                     </label>
                   </div>
                   {s.credit && <p className="mt-1.5 text-[11px] text-zinc-600">{s.credit}</p>}
+                  {s.mediaType === "video" && s.mediaUrl && (
+                    <ClipControls
+                      scene={s}
+                      onChange={(patch) => {
+                        updateScene(i, patch);
+                        if ("clipStart" in patch) player.current?.seekToScene(i);
+                      }}
+                    />
+                  )}
+                  <LengthControl scene={s} onChange={(customDuration) => updateScene(i, { customDuration })} />
                 </li>
               ))}
             </ol>
@@ -458,6 +490,113 @@ export function Editor({ initial, pro, stockEnabled, voiceEnabled }: Props) {
           </div>
         </div>
       )}
+    </div>
+  );
+}
+
+const fieldLabel = "text-[11px] font-semibold uppercase tracking-wider text-zinc-500";
+
+// Trim point + original sound for a scene that shows one of the user's clips.
+function ClipControls({ scene, onChange }: { scene: Scene; onChange: (patch: Partial<Scene>) => void }) {
+  const full = scene.clipDuration ?? 0;
+  const start = Math.min(scene.clipStart ?? 0, Math.max(0, full - 0.5));
+  const loops = full > 0 && full - start < scene.durationSec - 0.05;
+  return (
+    <div className="mt-3 space-y-2 rounded-xl bg-white/5 p-3">
+      <div className="flex items-center gap-3">
+        <span className={`${fieldLabel} w-16 shrink-0`}>Trim</span>
+        <input
+          type="range"
+          min={0}
+          max={Math.max(0, full - 0.5)}
+          step={0.1}
+          value={start}
+          disabled={full <= 0.5}
+          onChange={(e) => onChange({ clipStart: Number(e.target.value) })}
+          className="flex-1 accent-brand-500"
+          aria-label="Clip start"
+        />
+        <span className="w-28 shrink-0 text-right text-xs tabular-nums text-zinc-400">
+          from {start.toFixed(1)}s of {full.toFixed(1)}s
+        </span>
+      </div>
+      <div className="flex items-center gap-3">
+        <span className={`${fieldLabel} w-16 shrink-0`}>Sound</span>
+        <label className="flex shrink-0 cursor-pointer items-center gap-1.5 text-xs text-zinc-300">
+          <input
+            type="checkbox"
+            checked={!!scene.clipAudio}
+            onChange={(e) => onChange({ clipAudio: e.target.checked })}
+            className="accent-brand-500"
+          />
+          Keep clip audio
+        </label>
+        {scene.clipAudio && (
+          <>
+            <input
+              type="range"
+              min={0}
+              max={1}
+              step={0.05}
+              value={scene.clipVolume ?? 1}
+              onChange={(e) => onChange({ clipVolume: Number(e.target.value) })}
+              className="flex-1 accent-brand-500"
+              aria-label="Clip volume"
+            />
+            <span className="w-10 shrink-0 text-right text-xs tabular-nums text-zinc-400">
+              {Math.round((scene.clipVolume ?? 1) * 100)}%
+            </span>
+          </>
+        )}
+      </div>
+      {loops && <p className="text-[11px] text-zinc-500">The clip is shorter than this scene from the trim point, so it loops.</p>}
+    </div>
+  );
+}
+
+// Scene length: follows the voiceover by default, or set by hand.
+function LengthControl({ scene, onChange }: { scene: Scene; onChange: (customDuration: number | null) => void }) {
+  const manual = !!scene.customDuration;
+  const remaining = scene.mediaType === "video" && scene.clipDuration ? scene.clipDuration - (scene.clipStart ?? 0) : 0;
+  return (
+    <div className="mt-3 flex flex-wrap items-center gap-3">
+      <span className={`${fieldLabel} w-16 shrink-0`}>Length</span>
+      <div className="flex shrink-0 gap-1 rounded-lg bg-white/5 p-0.5 text-xs">
+        <button
+          onClick={() => onChange(null)}
+          className={`rounded-md px-2 py-1 ${!manual ? "bg-zinc-700 text-white" : "text-zinc-400 hover:text-white"}`}
+          title="Fit the voiceover"
+        >
+          Auto
+        </button>
+        <button
+          onClick={() => !manual && onChange(scene.durationSec)}
+          className={`rounded-md px-2 py-1 ${manual ? "bg-zinc-700 text-white" : "text-zinc-400 hover:text-white"}`}
+        >
+          Custom
+        </button>
+        {remaining >= 1 && (
+          <button
+            onClick={() => onChange(Math.min(20, Math.round(remaining * 10) / 10))}
+            className="rounded-md px-2 py-1 text-zinc-400 hover:text-white"
+          >
+            Match clip
+          </button>
+        )}
+      </div>
+      {manual && (
+        <input
+          type="range"
+          min={1}
+          max={20}
+          step={0.1}
+          value={scene.customDuration!}
+          onChange={(e) => onChange(Number(e.target.value))}
+          className="min-w-24 flex-1 accent-brand-500"
+          aria-label="Scene length"
+        />
+      )}
+      <span className="shrink-0 text-xs tabular-nums text-zinc-400">{scene.durationSec.toFixed(1)}s</span>
     </div>
   );
 }

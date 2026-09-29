@@ -4,8 +4,16 @@ export type Scene = {
   onScreen: string; // short punchy caption headline
   visualQuery: string; // stock search keywords
   durationSec: number;
-  mediaUrl?: string | null; // stock image (proxied through /api/media)
+  mediaUrl?: string | null; // stock image (proxied through /api/media) or the user's own asset
+  mediaType?: "image" | "video"; // missing = image
   credit?: string | null;
+  // Scene length set by hand; otherwise it follows the narration.
+  customDuration?: number | null;
+  // Video clip edits.
+  clipStart?: number; // seconds into the clip where this scene begins
+  clipDuration?: number; // full length of the clip
+  clipAudio?: boolean; // keep the clip's own sound
+  clipVolume?: number; // 0..1
   palette: [string, string]; // gradient fallback colors
   emoji?: string;
 };
@@ -26,3 +34,13 @@ export const ASPECTS: { id: Aspect; label: string; w: number; h: number; hint: s
   { id: "1:1", label: "1:1", w: 1080, h: 1080, hint: "Feed posts" },
   { id: "16:9", label: "16:9", w: 1280, h: 720, hint: "YouTube" },
 ];
+
+// A user upload (photo or video clip) attached to a project.
+export type AssetRef = { id: string; kind: "image" | "video"; duration: number };
+
+export function assetUrl(id: string) {
+  return `/api/assets/${id}`;
+}
+export function posterUrl(id: string) {
+  return `/api/assets/${id}?poster=1`;
+}

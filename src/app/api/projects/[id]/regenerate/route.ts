@@ -15,7 +15,7 @@ export async function POST(_req: Request, { params }: { params: Promise<{ id: st
     if (!project) return jsonError("Not found", 404);
 
     const current = JSON.parse(project.scenes) as Scene[];
-    const { ids: photoIds, photos } = await loadPhotos(user.id, JSON.parse(project.assetIds) as string[]);
+    const { refs, photos } = await loadPhotos(user.id, JSON.parse(project.assetIds) as string[]);
     const board = await generateStoryboard({
       photos,
       prompt: project.prompt,
@@ -23,7 +23,7 @@ export async function POST(_req: Request, { params }: { params: Promise<{ id: st
       style: project.style as VideoStyle,
       targetSeconds: Math.max(15, Math.min(90, project.durationSec || 30)),
     });
-    const scenes = await attachVisuals(board.scenes, photoIds, project.aspect);
+    const scenes = await attachVisuals(board.scenes, refs, project.aspect);
 
     const updated = await db.project.update({
       where: { id },

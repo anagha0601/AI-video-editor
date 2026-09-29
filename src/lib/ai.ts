@@ -40,7 +40,7 @@ export type Storyboard = {
   scenes: StoryboardScene[];
 };
 
-export type Photo = { mime: string; base64: string };
+export type Photo = { mime: string; base64: string; video?: boolean }; // video = a clip's poster frame
 
 export type GenerateInput = {
   prompt: string;
@@ -127,18 +127,23 @@ Rules:
 - visualQuery must be something a stock library would actually have (e.g. "city night traffic", "woman running sunrise"), never abstract words.
 - If the user provides a full script, keep their wording and meaning; only split it into scenes and tighten where needed.`;
 
-function photoInstructions(count: number, canSee: boolean) {
+function photoInstructions(photos: Photo[], canSee: boolean) {
+  const count = photos.length;
   if (!count) return "";
+  const clips = photos.flatMap((p, i) => (p.video ? [i + 1] : []));
+  const clipNote = clips.length
+    ? ` ${clips.length === 1 ? `Photo ${clips[0]} is` : `Photos ${clips.join(", ")} are`} the opening frame of a video clip the user filmed; treat ${clips.length === 1 ? "it" : "them"} as moving footage of that scene.`
+    : "";
   const plural = count > 1 ? "s" : "";
   const see = canSee
     ? `The user attached ${count} photo${plural}, shown above in order as Photo 1..${count}. Build the video around them: write narration that matches what is actually in each photo, and never contradict what the photos show.`
     : `The user attached ${count} photo${plural} (you can't see them). Use them in upload order.`;
-  return `\n\n${see}\nSet photoIndex on every scene to the photo it should show. Use every photo at least once. Make at least ${count} scenes (at most ${Math.max(8, count)}).`;
+  return `\n\n${see}${clipNote}\nSet photoIndex on every scene to the photo it should show. Use every photo at least once. Make at least ${count} scenes (at most ${Math.max(8, count)}).`;
 }
 
 function userPrompt(input: GenerateInput, canSeePhotos = false) {
   const wordBudget = Math.round(input.targetSeconds * 2.6);
-  const photos = photoInstructions(input.photos?.length ?? 0, canSeePhotos);
+  const photos = photoInstructions(input.photos ?? [], canSeePhotos);
   return (input.mode === "script"
     ? `Here is my script. Split it into scenes for a ${input.style} short video.\n\n<script>\n${input.prompt}\n</script>`
     : `Create a ${input.style} short video (~${input.targetSeconds} seconds, about ${wordBudget} spoken words total) about:\n\n<idea>\n${input.prompt}\n</idea>`) + photos;

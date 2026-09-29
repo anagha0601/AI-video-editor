@@ -2,7 +2,7 @@
 
 import { forwardRef, useEffect, useImperativeHandle, useMemo, useRef, useState } from "react";
 import type { Scene } from "@/lib/types";
-import { buildTimeline, drawFrame, loadImages, sceneAt, type Images } from "@/lib/renderer";
+import { buildTimeline, disposeImages, drawFrame, loadImages, sceneAt, syncVideos, type Images } from "@/lib/renderer";
 
 export type PlayerHandle = { seekToScene: (index: number) => void; pause: () => void };
 
@@ -27,27 +27,39 @@ export const Player = forwardRef<PlayerHandle, Props>(function Player({ scenes, 
   const [t, setT] = useState(0);
   const [playing, setPlaying] = useState(false);
   const [voice, setVoice] = useState(true);
+  const [frame, setFrame] = useState(0); // bumps when a paused clip finishes seeking
   const tRef = useRef(0);
   const lastScene = useRef(-1);
 
   const { timeline, total } = useMemo(() => buildTimeline(scenes), [scenes]);
-  const mediaKey = scenes.map((s) => s.mediaUrl ?? "").join("|");
+  const mediaKey = scenes.map((s) => `${s.id}:${s.mediaUrl ?? ""}`).sort().join("|");
 
   useEffect(() => {
     let cancelled = false;
-    loadImages(scenes).then((m) => !cancelled && setImages(m));
+    let loaded: Images | null = null;
+    loadImages(scenes).then((m) => {
+      if (cancelled) return disposeImages(m);
+      loaded = m;
+      m.forEach((el) => {
+        if (el instanceof HTMLVideoElement) el.addEventListener("seeked", () => setFrame((n) => n + 1));
+      });
+      setImages(m);
+    });
     return () => {
       cancelled = true;
+      if (loaded) disposeImages(loaded);
     };
     // Only reload when the media set changes, not on every text edit.
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [mediaKey]);
 
-  // Draw whenever time or content changes.
+  // Draw whenever time or content changes (keeping clips in step with the playhead).
   useEffect(() => {
     const ctx = canvasRef.current?.getContext("2d");
-    if (ctx) drawFrame(ctx, W, H, scenes, images, timeline, total, Math.min(t, total - 0.001), { watermark });
-  }, [t, scenes, images, timeline, total, W, H, watermark]);
+    const at = Math.min(t, total - 0.001);
+    syncVideos(scenes, images, timeline, at, playing);
+    if (ctx) drawFrame(ctx, W, H, scenes, images, timeline, total, at, { watermark });
+  }, [t, frame, playing, scenes, images, timeline, total, W, H, watermark]);
 
   const current = sceneAt(timeline, t);
   useEffect(() => {

@@ -2,7 +2,7 @@ import { NextResponse } from "next/server";
 import { z } from "zod";
 import { db } from "@/lib/db";
 import { getOwnedProject, jsonError, serializeProject, withUser } from "@/lib/api";
-import { estimateDuration } from "@/lib/timing";
+import { sceneDuration } from "@/lib/timing";
 
 type Ctx = { params: Promise<{ id: string }> };
 
@@ -21,7 +21,13 @@ const SceneSchema = z.object({
   visualQuery: z.string().max(120),
   durationSec: z.number().min(1).max(20).optional(),
   mediaUrl: z.string().nullable().optional(),
+  mediaType: z.enum(["image", "video"]).optional(),
   credit: z.string().nullable().optional(),
+  customDuration: z.number().min(1).max(20).nullable().optional(),
+  clipStart: z.number().min(0).max(36000).optional(),
+  clipDuration: z.number().min(0).max(36000).optional(),
+  clipAudio: z.boolean().optional(),
+  clipVolume: z.number().min(0).max(1).optional(),
   palette: z.tuple([z.string(), z.string()]),
   emoji: z.string().optional(),
 });
@@ -44,8 +50,8 @@ export async function PATCH(req: Request, { params }: Ctx) {
     if (!parsed.success) return jsonError(parsed.error.issues[0]?.message ?? "Invalid input");
     const { scenes, hashtags, assetIds, ...rest } = parsed.data;
 
-    // Keep each scene's timing in sync with its narration after edits.
-    const normalized = scenes?.map((s) => ({ ...s, durationSec: estimateDuration(s.narration) }));
+    // Keep each scene's timing in sync with its narration (or hand-set length) after edits.
+    const normalized = scenes?.map((s) => ({ ...s, durationSec: sceneDuration(s) }));
     const updated = await db.project.update({
       where: { id },
       data: {

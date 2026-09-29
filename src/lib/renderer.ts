@@ -1,8 +1,9 @@
 // Client-side video engine: draws a storyboard onto a <canvas> at any time `t`,
 // and records it (plus optional voiceover audio) to a video file with MediaRecorder.
 import type { Scene } from "./types";
+import { sceneDuration } from "./timing";
 
-export type Images = Map<string, HTMLImageElement | null>;
+export type Images = Map<string, HTMLImageElement | HTMLVideoElement | null>;
 export type Timeline = { start: number; end: number }[];
 
 const FADE = 0.35;
@@ -24,31 +25,111 @@ export function sceneAt(timeline: Timeline, t: number) {
   return i === -1 ? timeline.length - 1 : i;
 }
 
+// Loads each scene's visual. Clips are fetched whole into blob URLs so seeking is
+// instant and exact (and the canvas stays exportable).
 export async function loadImages(scenes: Scene[]): Promise<Images> {
   const map: Images = new Map();
+  const blobs = new Map<string, Promise<string | null>>();
+  const blobUrl = (url: string) => {
+    if (!blobs.has(url)) {
+      blobs.set(
+        url,
+        fetch(url)
+          .then((r) => (r.ok ? r.blob() : null))
+          .then((b) => (b ? URL.createObjectURL(b) : null))
+          .catch(() => null),
+      );
+    }
+    return blobs.get(url)!;
+  };
   await Promise.all(
-    scenes.map(
-      (s) =>
-        new Promise<void>((resolve) => {
-          if (!s.mediaUrl) {
-            map.set(s.id, null);
-            return resolve();
-          }
-          const img = new Image();
-          img.crossOrigin = "anonymous";
-          img.onload = () => {
-            map.set(s.id, img);
-            resolve();
-          };
-          img.onerror = () => {
-            map.set(s.id, null);
-            resolve();
-          };
-          img.src = s.mediaUrl;
-        }),
-    ),
+    scenes.map(async (s) => {
+      if (!s.mediaUrl) return map.set(s.id, null);
+      if (s.mediaType === "video") {
+        const src = await blobUrl(s.mediaUrl);
+        if (!src) return map.set(s.id, null);
+        const video = document.createElement("video");
+        video.muted = true;
+        video.playsInline = true;
+        video.loop = true;
+        video.preload = "auto";
+        const ok = await new Promise<boolean>((resolve) => {
+          video.onloadeddata = () => resolve(true);
+          video.onerror = () => resolve(false);
+          video.src = src;
+        });
+        if (ok) video.currentTime = s.clipStart ?? 0;
+        return map.set(s.id, ok ? video : null);
+      }
+      await new Promise<void>((resolve) => {
+        const img = new Image();
+        img.crossOrigin = "anonymous";
+        img.onload = () => {
+          map.set(s.id, img);
+          resolve();
+        };
+        img.onerror = () => {
+          map.set(s.id, null);
+          resolve();
+        };
+        img.src = s.mediaUrl!;
+      });
+    }),
   );
   return map;
+}
+
+// Stops clips and frees their blob URLs.
+export function disposeImages(images: Images) {
+  const urls = new Set<string>();
+  images.forEach((el) => {
+    if (el instanceof HTMLVideoElement) {
+      el.pause();
+      urls.add(el.src);
+      el.removeAttribute("src");
+      el.load();
+    }
+  });
+  urls.forEach((u) => u.startsWith("blob:") && URL.revokeObjectURL(u));
+}
+
+// Where in the clip a scene should be `local` seconds in (loops from the trim point).
+function clipTime(scene: Scene, video: HTMLVideoElement, local: number) {
+  const full = Number.isFinite(video.duration) && video.duration > 0 ? video.duration : scene.clipDuration ?? 0;
+  const start = Math.min(scene.clipStart ?? 0, Math.max(0, full - 0.1));
+  const len = full - start;
+  if (len <= 0.15) return start;
+  return start + (local % len);
+}
+
+// Drives every clip to match timeline time `t`: the visible scene(s) play (or sit
+// on the right frame while paused), the next one is cued at its trim point.
+export function syncVideos(scenes: Scene[], images: Images, timeline: Timeline, t: number, playing: boolean) {
+  if (!scenes.length) return;
+  const i = sceneAt(timeline, t);
+  scenes.forEach((scene, k) => {
+    const el = images.get(scene.id);
+    if (!(el instanceof HTMLVideoElement)) return;
+    const seg = timeline[k];
+    const local = t - seg.start;
+    const visible = k === i || (k === i - 1 && t - timeline[i].start < FADE);
+    el.muted = !scene.clipAudio;
+    el.volume = el.dataset.routed ? 1 : Math.min(1, Math.max(0, scene.clipVolume ?? 1));
+    if (!visible) {
+      if (!el.paused) el.pause();
+      const cue = clipTime(scene, el, 0);
+      if (k === i + 1 && !el.seeking && Math.abs(el.currentTime - cue) > 0.1) el.currentTime = cue;
+      return;
+    }
+    const target = clipTime(scene, el, Math.max(0, local));
+    if (playing) {
+      if (el.paused) el.play().catch(() => {});
+      if (!el.seeking && Math.abs(el.currentTime - target) > 0.35) el.currentTime = target;
+    } else {
+      if (!el.paused) el.pause();
+      if (!el.seeking && Math.abs(el.currentTime - target) > 0.04) el.currentTime = target;
+    }
+  });
 }
 
 function drawBackground(
@@ -56,13 +137,22 @@ function drawBackground(
   W: number,
   H: number,
   scene: Scene,
-  img: HTMLImageElement | null | undefined,
+  img: HTMLImageElement | HTMLVideoElement | null | undefined,
   local: number,
   dur: number,
   index: number,
 ) {
   const p = Math.min(1, local / dur);
-  if (img) {
+  if (img instanceof HTMLVideoElement && img.readyState >= 2) {
+    // Real footage: cover-fit, no Ken Burns.
+    const scale = Math.max(W / img.videoWidth, H / img.videoHeight);
+    const w = img.videoWidth * scale;
+    const h = img.videoHeight * scale;
+    ctx.drawImage(img, (W - w) / 2, (H - h) / 2, w, h);
+  } else if (img instanceof HTMLVideoElement) {
+    ctx.fillStyle = "#000";
+    ctx.fillRect(0, 0, W, H);
+  } else if (img) {
     // Ken Burns: slow zoom with a gentle pan, direction alternating per scene.
     const zoom = 1.04 + 0.1 * p;
     const scale = Math.max(W / img.width, H / img.height) * zoom;
@@ -297,19 +387,26 @@ export async function exportVideo(opts: ExportOptions): Promise<{ blob: Blob; ex
   onProgress?.(0, "Loading visuals");
   const images = await loadImages(scenes);
 
-  let audioCtx: AudioContext | null = null;
+  const clipsWithSound = scenes.filter((s) => s.clipAudio && images.get(s.id) instanceof HTMLVideoElement);
+  const audioCtx: AudioContext | null = fetchVoice || clipsWithSound.length ? new AudioContext() : null;
   let buffers: (AudioBuffer | null)[] = [];
   let durations: number[] | undefined;
-  if (fetchVoice) {
-    audioCtx = new AudioContext();
+  if (fetchVoice && audioCtx) {
     buffers = [];
     for (let k = 0; k < scenes.length; k++) {
       onProgress?.(k / scenes.length / 4, `Generating voiceover ${k + 1}/${scenes.length}`);
-      const data = await fetchVoice(scenes[k].narration);
-      buffers.push(await audioCtx.decodeAudioData(data));
+      try {
+        buffers.push(await audioCtx.decodeAudioData(await fetchVoice(scenes[k].narration)));
+      } catch (e) {
+        disposeImages(images);
+        await audioCtx.close();
+        throw e;
+      }
     }
-    // Let each scene last as long as its spoken line (plus a breath).
-    durations = scenes.map((s, k) => Math.max(2, (buffers[k]?.duration ?? s.durationSec) + 0.3));
+    // Let each scene last as long as its spoken line (plus a breath), unless its length was set by hand.
+    durations = scenes.map((s, k) =>
+      s.customDuration ? sceneDuration(s) : Math.max(2, (buffers[k]?.duration ?? s.durationSec) + 0.3),
+    );
   }
   const { timeline, total } = buildTimeline(scenes, durations);
 
@@ -330,6 +427,14 @@ export async function exportVideo(opts: ExportOptions): Promise<{ blob: Blob; ex
       src.connect(dest);
       src.start(t0 + timeline[k].start);
     });
+    // Clips that keep their own sound are mixed in through a gain (their volume).
+    for (const s of clipsWithSound) {
+      const el = images.get(s.id) as HTMLVideoElement;
+      el.dataset.routed = "1";
+      const gain = audioCtx.createGain();
+      gain.gain.value = Math.min(1, Math.max(0, s.clipVolume ?? 1));
+      audioCtx.createMediaElementSource(el).connect(gain).connect(dest);
+    }
     dest.stream.getAudioTracks().forEach((track) => stream.addTrack(track));
   }
 
@@ -343,6 +448,7 @@ export async function exportVideo(opts: ExportOptions): Promise<{ blob: Blob; ex
   await new Promise<void>((resolve) => {
     const tick = () => {
       const t = Math.max(0, (performance.now() - startedAt) / 1000);
+      syncVideos(scenes, images, timeline, Math.min(t, total - 0.001), true);
       drawFrame(ctx, W, H, scenes, images, timeline, total, Math.min(t, total - 0.001), { watermark });
       onProgress?.((fetchVoice ? 0.25 : 0) + (fetchVoice ? 0.75 : 1) * Math.min(1, t / total), "Rendering video");
       if (t >= total + 0.2) resolve();
@@ -353,6 +459,7 @@ export async function exportVideo(opts: ExportOptions): Promise<{ blob: Blob; ex
   recorder.stop();
   await done;
   stream.getTracks().forEach((track) => track.stop());
+  disposeImages(images);
   await audioCtx?.close();
 
   const type = mimeType.split(";")[0];
