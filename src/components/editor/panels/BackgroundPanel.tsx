@@ -11,7 +11,7 @@ import type { Timeline, VisualClip } from "@/lib/timeline/types";
 import { Button } from "@/components/ui/button";
 import { cn } from "@/lib/utils";
 import { useEditor } from "../store";
-import { Section, SliderField } from "./fields";
+import { Section, SliderField, useTimelineEdit } from "./fields";
 
 /** Video clips that can be cut out: every video clip except the background itself. */
 const personClips = (tl: Timeline) =>
@@ -46,7 +46,7 @@ export function BackgroundPanel() {
   const pendingJobs = [...new Set(clips.map((c) => c.matte?.jobId).filter((x): x is string => !!x))];
   const key = chosen.map((s) => s.src).join("|") + JSON.stringify(matteWindows(chosen.flatMap((s) => s.clips)));
 
-  const useImage = (a: AssetDTO) => {
+  const applyImage = (a: AssetDTO) => {
     const s = useEditor.getState();
     s.commit(setBackground(structuredClone(s.timeline), a), "Background image");
     if (!clips.some((c) => c.matte?.on || c.matte?.jobId)) toast.info("Background added below your video. Now cut out the person so it shows through.");
@@ -59,7 +59,7 @@ export function BackgroundPanel() {
       if (a.type !== "image") throw new Error("Pick an image (JPG, PNG, WebP)");
       const s = useEditor.getState();
       s.setAssets([...(Object.values(s.assets) as AssetDTO[]), a]);
-      useImage(a);
+      applyImage(a);
     } catch (e) {
       toast.error((e as Error).message);
     } finally {
@@ -116,12 +116,9 @@ export function BackgroundPanel() {
     s.commit({ ...s.timeline, tracks: s.timeline.tracks.filter((t) => !(t.kind === "video" && t.name === "Background")) }, "Remove background");
   };
 
-  const setDim = (v: number, done: boolean) => {
-    const s = useEditor.getState();
-    const next = { ...s.timeline, tracks: s.timeline.tracks.map((t) => (t.kind === "video" && t.name === "Background" ? { ...t, clips: t.clips.map((c) => ({ ...c, filters: { ...c.filters, brightness: v } })) } : t)) } as Timeline;
-    if (done) s.commit(next, "Background brightness");
-    else s.live(next);
-  };
+  const dim = useTimelineEdit();
+  const setDim = (v: number) =>
+    dim.live((tl) => ({ ...tl, tracks: tl.tracks.map((t) => (t.kind === "video" && t.name === "Background" ? { ...t, clips: t.clips.map((c) => ({ ...c, filters: { ...c.filters, brightness: v } })) } : t)) }) as Timeline);
 
   return (
     <div>
@@ -140,7 +137,7 @@ export function BackgroundPanel() {
             </Button>
           </div>
         ) : null}
-        {bg && <SliderField label="Brightness" value={bg.filters.brightness} min={0.4} max={1.3} step={0.01} format={(v) => `${Math.round(v * 100)}%`} onLive={(v) => setDim(v, false)} onDone={(v) => setDim(v, true)} />}
+        {bg && <SliderField label="Brightness" value={bg.filters.brightness} min={0.4} max={1.3} step={0.01} format={(v) => `${Math.round(v * 100)}%`} onLive={setDim} onDone={() => dim.done("Background brightness")} />}
         <div className="grid grid-cols-4 gap-1">
           <button
             type="button"
@@ -155,7 +152,7 @@ export function BackgroundPanel() {
             <button
               key={a.id}
               type="button"
-              onClick={() => useImage(a)}
+              onClick={() => applyImage(a)}
               title={a.name}
               className={cn("aspect-[9/16] overflow-hidden rounded-md border hover:ring-2 hover:ring-primary", bg?.assetId === a.id && "ring-2 ring-primary")}
             >
