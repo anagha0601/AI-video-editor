@@ -37,6 +37,14 @@ export class MediaPool implements FrameSource {
     return { el: v, w: v.videoWidth, h: v.videoHeight };
   }
 
+  /** The clip's person matte, synced with its video (draw.ts masks the frame with it). */
+  matte(clip: VisualClip) {
+    if (!clip.matte?.on) return null;
+    const m = this.videos.get(`${clip.id}:matte`);
+    if (!m || m.readyState < 2) return null;
+    return { el: m, w: m.videoWidth, h: m.videoHeight };
+  }
+
   private image(src: string) {
     let img = this.images.get(src);
     if (!img) {
@@ -49,19 +57,19 @@ export class MediaPool implements FrameSource {
     return img;
   }
 
-  private video(clip: VisualClip) {
-    let v = this.videos.get(clip.id);
-    if (!v || v.dataset.src !== clip.src) {
+  private video(clip: VisualClip, key = clip.id, src = clip.src!) {
+    let v = this.videos.get(key);
+    if (!v || v.dataset.src !== src) {
       v?.pause();
       v = document.createElement("video");
-      v.dataset.src = clip.src!;
+      v.dataset.src = src;
       v.playsInline = true;
       v.preload = "auto";
       v.muted = true;
-      v.src = clip.src!;
+      v.src = src;
       v.addEventListener("seeked", () => this.onFrame());
       v.addEventListener("loadeddata", () => this.onFrame());
-      this.videos.set(clip.id, v);
+      this.videos.set(key, v);
     }
     return v;
   }
@@ -104,6 +112,13 @@ export class MediaPool implements FrameSource {
           v.muted = !audible;
           if (audible) v.volume = clamp(c.volume * fadeGain(c, t), 0, 1);
           this.drive(v, target, playing && active && target < srcDur - 0.05, c.speed);
+          if (c.matte?.on && c.matte.url) {
+            const key = `${c.id}:matte`;
+            keepV.add(key);
+            const m = this.video(c, key, c.matte.url);
+            const mt = clamp(target - c.matte.srcIn, 0, Math.max(0, c.matte.srcLen - 0.02));
+            this.drive(m, mt, playing && active && target < srcDur - 0.05, c.speed);
+          }
         }
       } else if (track.kind === "voice" || track.kind === "music") {
         for (const c of track.clips) {

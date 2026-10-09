@@ -1,12 +1,18 @@
 "use client";
 
 import { useEffect, useRef, useState } from "react";
-import { Download, Loader2, Trash2, Upload } from "lucide-react";
+import { AlertTriangle, CheckCircle2, Download, ExternalLink, Loader2, Music2, Trash2, Upload } from "lucide-react";
 import { toast } from "sonner";
 import { api } from "@/lib/client/api";
 import { Button } from "@/components/ui/button";
 import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle, DialogTrigger } from "@/components/ui/dialog";
 import { Badge } from "@/components/ui/badge";
+import { AlertDialog, AlertDialogAction, AlertDialogCancel, AlertDialogContent, AlertDialogDescription, AlertDialogFooter, AlertDialogHeader, AlertDialogTitle } from "@/components/ui/alert-dialog";
+import { clipEnd } from "@/lib/timeline/derive";
+import type { AudioClip, Timeline } from "@/lib/timeline/types";
+import type { AssetDTO } from "@/lib/client/upload";
+import { fmtTime } from "./panels/AudioClipper";
+import { QualityReport, type QualityReportData } from "./QualityReport";
 import { cn } from "@/lib/utils";
 import { useEditor } from "./store";
 import { saveNow } from "./hooks";
@@ -23,6 +29,73 @@ export interface RenderRow {
   createdAt: string;
   finishedAt: string | null;
   version: { id: string; name: string };
+  report?: RenderReport | null;
+}
+
+export interface RenderReport {
+  quality?: QualityReportData;
+  audio?: {
+    target: { lufs: number; truePeak: number };
+    mix: { lufs: number | null; truePeak: number | null };
+    output: { lufs: number | null; truePeak: number | null };
+    sourcesOverPeak: { name: string; truePeak: number }[];
+    clippingDetected: boolean;
+    fixed: boolean;
+    pass: boolean;
+  };
+}
+
+/** Music on the timeline that came from a pasted link: what to pick in Instagram, and whether it's cleared. */
+export function linkMusic(tl: Timeline, assets: Record<string, AssetDTO>) {
+  const out: { clip: AudioClip; start: number; end: number; rights: boolean; active: boolean }[] = [];
+  for (const t of tl.tracks) {
+    if (t.kind !== "music") continue;
+    for (const c of t.clips) {
+      if (!c.link) continue;
+      const a = c.assetId ? assets[c.assetId] : undefined;
+      // derived from the clip, so later trims on the timeline are reflected
+      out.push({ clip: c, start: c.in, end: c.in + c.duration * c.speed, rights: !!a?.meta?.rights, active: !t.muted && !c.muted && c.volume > 0 });
+    }
+  }
+  return out.sort((a, b) => a.clip.start - b.clip.start);
+}
+
+export function MusicHandoff({ tl, assets }: { tl: Timeline; assets: Record<string, AssetDTO> }) {
+  const items = linkMusic(tl, assets);
+  if (!items.length) return null;
+  return (
+    <div className="space-y-1.5 rounded-lg border p-2.5 text-xs">
+      <div className="flex items-center gap-1.5 font-medium">
+        <Music2 className="size-3.5" /> Sound hand-off
+      </div>
+      {items.map(({ clip, start, end, rights }) => (
+        <div key={clip.id} className="space-y-0.5">
+          <div>
+            Start the sound at <strong className="text-sm">{fmtTime(start)}</strong> <span className="text-muted-foreground">({start.toFixed(1)}s → {end.toFixed(1)}s, plays from {fmtTime(clip.start)} to {fmtTime(clipEnd(clip))} in the reel)</span>
+          </div>
+          <a href={clip.link!.url} target="_blank" rel="noreferrer" className="inline-flex max-w-full items-center gap-1 truncate text-muted-foreground hover:text-foreground">
+            <ExternalLink className="size-3 shrink-0" /> <span className="truncate">{clip.link!.url}</span>
+          </a>
+          {!rights && <div className="text-amber-300">Timing only / personal use: add this sound in Instagram rather than posting it baked in.</div>}
+        </div>
+      ))}
+    </div>
+  );
+}
+
+function AudioCheck({ report }: { report?: RenderReport | null }) {
+  const a = report?.audio;
+  if (!a) return null;
+  const tp = a.output.truePeak;
+  const lufs = a.output.lufs;
+  return (
+    <div className={cn("flex items-center gap-1 text-[11px]", a.pass ? "text-emerald-400" : "text-amber-300")} title={a.sourcesOverPeak.length ? `Sources over -1 dBTP: ${a.sourcesOverPeak.map((s) => `${s.name} (${s.truePeak.toFixed(1)})`).join(", ")}` : undefined}>
+      {a.pass ? <CheckCircle2 className="size-3" /> : <AlertTriangle className="size-3" />}
+      Audio {lufs != null ? `${lufs.toFixed(1)} LUFS` : "silent"}
+      {tp != null ? ` · peak ${tp.toFixed(1)} dBTP` : ""}
+      {a.clippingDetected ? (a.fixed ? " · clipping fixed" : " · clipping!") : ""}
+    </div>
+  );
 }
 
 export function RenderList({ projectId, renders, onChange }: { projectId: string; renders: RenderRow[]; onChange: (r: RenderRow[]) => void }) {
@@ -82,10 +155,14 @@ export function RenderList({ projectId, renders, onChange }: { projectId: string
               </Badge>
             </div>
             {r.status === "done" ? (
-              <div className="text-[11px] text-muted-foreground">
-                {r.duration ? `${r.duration.toFixed(1)}s · ` : ""}
-                {new Date(r.finishedAt ?? r.createdAt).toLocaleString()}
-              </div>
+              <>
+                <div className="text-[11px] text-muted-foreground">
+                  {r.duration ? `${r.duration.toFixed(1)}s · ` : ""}
+                  {new Date(r.finishedAt ?? r.createdAt).toLocaleString()}
+                </div>
+                <AudioCheck report={r.report} />
+                <QualityReport q={r.report?.quality} />
+              </>
             ) : r.status === "failed" ? (
               <div className="line-clamp-2 text-[11px] text-destructive" title={r.error ?? ""}>
                 {r.error ?? "Failed"}
@@ -126,7 +203,11 @@ export function ExportDialog() {
   const [quality, setQuality] = useState<"720p" | "1080p">("1080p");
   const [renders, setRenders] = useState<RenderRow[] | null>(null);
   const [busy, setBusy] = useState(false);
+  const [confirm, setConfirm] = useState(false);
   const projectId = useEditor((s) => s.projectId);
+  const timeline = useEditor((s) => s.timeline);
+  const assets = useEditor((s) => s.assets);
+  const uncleared = linkMusic(timeline, assets).filter((m) => m.active && !m.rights);
 
   useEffect(() => {
     if (!open) return;
@@ -135,7 +216,8 @@ export function ExportDialog() {
       .catch((e) => toast.error(e.message));
   }, [open, projectId]);
 
-  const render = async () => {
+  const render = async (confirmed = false) => {
+    if (uncleared.length && !confirmed) return setConfirm(true);
     setBusy(true);
     try {
       await saveNow().catch(() => {});
@@ -176,9 +258,37 @@ export function ExportDialog() {
             </button>
           ))}
         </div>
-        <Button onClick={render} disabled={busy}>
+        <MusicHandoff tl={timeline} assets={assets} />
+        {uncleared.length > 0 && (
+          <p className="flex items-start gap-1.5 text-xs text-amber-300">
+            <AlertTriangle className="mt-0.5 size-3.5 shrink-0" /> This export includes link-sourced audio marked timing only / personal use. Mute that clip to export without it, or tick “I have the rights” in the Music panel.
+          </p>
+        )}
+        <Button onClick={() => render()} disabled={busy}>
           {busy ? <Loader2 className="animate-spin" /> : <Upload />} Render {quality}
         </Button>
+        <AlertDialog open={confirm} onOpenChange={setConfirm}>
+          <AlertDialogContent>
+            <AlertDialogHeader>
+              <AlertDialogTitle>Export with timing-only audio?</AlertDialogTitle>
+              <AlertDialogDescription>
+                {uncleared.map((m) => m.clip.name).join(", ")} came from a link and is marked timing only / personal use. Posting it baked into the video can get the reel muted or taken down. Usually you mute it here and add the same sound in
+                Instagram (see the hand-off for the start second).
+              </AlertDialogDescription>
+            </AlertDialogHeader>
+            <AlertDialogFooter>
+              <AlertDialogCancel>Cancel</AlertDialogCancel>
+              <AlertDialogAction
+                onClick={() => {
+                  setConfirm(false);
+                  render(true);
+                }}
+              >
+                Export anyway
+              </AlertDialogAction>
+            </AlertDialogFooter>
+          </AlertDialogContent>
+        </AlertDialog>
         <div className="max-h-[45vh] overflow-y-auto">
           {renders === null ? (
             <div className="flex justify-center py-4">

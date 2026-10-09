@@ -15,6 +15,9 @@ import {
 
 export const uid = (prefix = "c") => `${prefix}_${nanoid(8)}`;
 
+/** Starting intensity of a look (Cinematic Warm): clearly visible, still natural. */
+export const DEFAULT_GRADE_INTENSITY = 0.7;
+
 export const DEFAULT_FILTERS: Filters = { brightness: 1, contrast: 1, saturation: 1, preset: "none" };
 export const DEFAULT_TRANSFORM: Transform = { fit: "cover", scale: 1, x: 0, y: 0 };
 

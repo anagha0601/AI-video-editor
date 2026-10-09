@@ -2,16 +2,18 @@
 
 import { useRef, useState } from "react";
 import { useRouter } from "next/navigation";
-import { FileAudio, ImagePlus, Lightbulb, Loader2, Mic, PenLine, Sparkles, Upload, Wand2, X } from "lucide-react";
+import { Clapperboard, FileAudio, ImagePlus, Loader2, Mic, Music2, Scissors, Sparkles, Upload, Users, X, type LucideIcon } from "lucide-react";
 import { toast } from "sonner";
 import { api } from "@/lib/client/api";
 import { uploadAsset, uploadFile, type AssetDTO } from "@/lib/client/upload";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
+import { Slider } from "@/components/ui/slider";
+import { Switch } from "@/components/ui/switch";
 import { Textarea } from "@/components/ui/textarea";
-import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
+import { DEFAULT_GRADE_INTENSITY } from "@/lib/timeline/factory";
 import { cn } from "@/lib/utils";
 import { Recorder } from "./Recorder";
 
@@ -21,126 +23,192 @@ const ASPECTS = [
   { id: "1:1", label: "Square", hint: "Feed posts", w: 1, h: 1 },
 ] as const;
 
-const VOICES = [
-  { id: "Kore", label: "Kore — warm, clear (female)" },
-  { id: "Puck", label: "Puck — upbeat (male)" },
-  { id: "Charon", label: "Charon — deep, calm (male)" },
-  { id: "Aoede", label: "Aoede — breezy (female)" },
-  { id: "Fenrir", label: "Fenrir — energetic (male)" },
-  { id: "Leda", label: "Leda — youthful (female)" },
+type Mode = "music" | "talking_head" | "best_take" | "voiceover_broll" | "auto_clip";
+type Role = { id: string; label: string; hint: string; accept: string; many: boolean; required: boolean };
+
+const MODES: { id: Mode; label: string; icon: LucideIcon; body: string; roles: Role[]; next: string }[] = [
+  {
+    id: "music",
+    label: "Music edit",
+    icon: Music2,
+    body: "Silent clips cut to a track: hook → grind → reveal, every cut on the beat.",
+    roles: [
+      { id: "clips", label: "Clips", hint: "Your workout / b-roll clips", accept: "video/*", many: true, required: true },
+      { id: "music", label: "Track (optional)", hint: "MP3/M4A, or paste a link below", accept: "audio/*", many: false, required: false },
+    ],
+    next: "Claude learns the style, sorts the clips, finds the beats and the drop, then shows you the shot list.",
+  },
+  {
+    id: "talking_head",
+    label: "Talking head",
+    icon: Mic,
+    body: "Removes retakes, false starts, stutters, fillers and pauses. Punch-ins on jump cuts, word-timed captions.",
+    roles: [
+      { id: "clips", label: "Clips of you talking", hint: "One or more videos, in order", accept: "video/*", many: true, required: true },
+      { id: "background", label: "Background image (optional)", hint: "Replaces the background behind you (you are cut out on the CPU after you approve)", accept: "image/*", many: false, required: false },
+    ],
+    next: "Claude transcribes locally and shows you the cut list and the cleaned script before anything is edited.",
+  },
+  {
+    id: "best_take",
+    label: "Best take",
+    icon: Users,
+    body: "Several takes of the same script: the best take of every line, with colour and loudness matched.",
+    roles: [{ id: "takes", label: "Takes", hint: "Every take of the script", accept: "video/*", many: true, required: true }],
+    next: "Claude scores every take of every line. You see the table and can swap any line before approving.",
+  },
+  {
+    id: "voiceover_broll",
+    label: "Voiceover + b-roll",
+    icon: Clapperboard,
+    body: "Your voice plus b-roll: show the squat clip when you say “squats”. Optional cut-backs to your face.",
+    roles: [
+      { id: "voice", label: "Voice recording", hint: "Audio, or a video of you speaking", accept: "audio/*,video/*", many: false, required: true },
+      { id: "broll", label: "B-roll", hint: "Clips and photos", accept: "video/*,image/*", many: true, required: true },
+      { id: "music", label: "Background music (optional)", hint: "Ducked under your voice", accept: "audio/*", many: false, required: false },
+      { id: "background", label: "Background image (optional)", hint: "Behind you in the face cut-backs (voice must be a video of you)", accept: "image/*", many: false, required: false },
+    ],
+    next: "Claude matches b-roll to your words. You see the word → clip mapping and can reassign any segment.",
+  },
+  {
+    id: "auto_clip",
+    label: "Auto-clip",
+    icon: Scissors,
+    body: "One long video in, several vertical shorts out, each with a hook and captions.",
+    roles: [{ id: "source", label: "Long video", hint: "A talk, podcast, vlog…", accept: "video/*", many: false, required: true }],
+    next: "Claude finds the strongest self-contained moments. You pick which shorts to make.",
+  },
 ];
-const TONES = ["engaging", "educational", "inspiring", "funny", "calm", "dramatic"];
-const LENGTHS = [15, 30, 45, 60, 90];
-const EXAMPLES = [
-  "3 habits of calm, focused people",
-  "Why you should drink water before coffee",
-  "A 30-second tour of Kyoto in autumn",
-  "How compound interest quietly makes you rich",
-];
 
-type Source = "idea" | "script" | "voice";
-type Attached = { key: number; name: string; progress: number; asset?: AssetDTO; preview?: string };
+type Upload = { key: number; name: string; progress: number; asset?: AssetDTO; preview?: string };
 
-export function NewProject({ gemini, pexels }: { gemini: boolean; pexels: boolean }) {
-  const router = useRouter();
-  const [source, setSource] = useState<Source>(gemini ? "idea" : "voice");
-  const [title, setTitle] = useState("");
-  const [aspect, setAspect] = useState<(typeof ASPECTS)[number]["id"]>("9:16");
-  // idea / script
-  const [idea, setIdea] = useState("");
-  const [script, setScript] = useState("");
-  const [seconds, setSeconds] = useState(30);
-  const [tone, setTone] = useState("engaging");
-  const [voiceName, setVoiceName] = useState("Kore");
-  const [writing, setWriting] = useState(false);
-  const [usageIds, setUsageIds] = useState<string[]>([]);
-  // voice
-  const [voiceTab, setVoiceTab] = useState("upload");
-  const [file, setFile] = useState<File | null>(null);
-  const [recording, setRecording] = useState<Blob | null>(null);
-  // visuals
-  const [attached, setAttached] = useState<Attached[]>([]);
-  const [visualMode, setVisualMode] = useState<"auto" | "ai" | "stock">(gemini ? "auto" : "stock");
-  // submit
-  const [busy, setBusy] = useState<string | null>(null);
-  const fileRef = useRef<HTMLInputElement>(null);
-  const mediaRef = useRef<HTMLInputElement>(null);
-
-  const voiceBlob = voiceTab === "upload" ? file : recording;
-  const uploading = attached.some((a) => !a.asset);
-  const ready =
-    !busy &&
-    !uploading &&
-    (source === "voice" ? Boolean(voiceBlob) : source === "script" ? script.trim().length > 10 : idea.trim().length > 2 || script.trim().length > 10);
-
-  const writeScript = async () => {
-    if (!idea.trim()) return;
-    setWriting(true);
-    try {
-      const r = await api<{ title: string; script: string; usageIds: string[] }>("/api/script", { method: "POST", json: { idea, seconds, tone } });
-      setUsageIds((u) => [...u, ...r.usageIds]);
-      setScript(r.script);
-      if (!title.trim()) setTitle(r.title);
-    } catch (e) {
-      toast.error((e as Error).message);
-    } finally {
-      setWriting(false);
-    }
-  };
-
-  const addMedia = (files: FileList | null) => {
-    if (!files) return;
-    for (const f of [...files]) {
-      if (!/^(image|video)\//.test(f.type)) {
-        toast.error(`${f.name}: only photos and videos here`);
-        continue;
-      }
+function useUploads() {
+  const [byRole, setByRole] = useState<Record<string, Upload[]>>({});
+  const add = (role: string, files: File[], many: boolean, music = false) => {
+    for (const f of many ? files : files.slice(0, 1)) {
       const key = Math.random();
       const preview = f.type.startsWith("image/") ? URL.createObjectURL(f) : undefined;
-      setAttached((list) => [...list, { key, name: f.name, progress: 0, preview }]);
-      uploadAsset(f, "auto", (p) => setAttached((list) => list.map((x) => (x.key === key ? { ...x, progress: p } : x))))
-        .then((asset) => setAttached((list) => list.map((x) => (x.key === key ? { ...x, asset, progress: 1 } : x))))
+      setByRole((m) => ({ ...m, [role]: [...(many ? (m[role] ?? []) : []), { key, name: f.name, progress: 0, preview }] }));
+      const patch = (fn: (u: Upload) => Upload) => setByRole((m) => ({ ...m, [role]: (m[role] ?? []).map((u) => (u.key === key ? fn(u) : u)) }));
+      uploadAsset(f, music ? "music" : "auto", (p) => patch((u) => ({ ...u, progress: p })))
+        .then((asset) => patch((u) => ({ ...u, asset, progress: 1 })))
         .catch((e) => {
           toast.error(`${f.name}: ${(e as Error).message}`);
-          setAttached((list) => list.filter((x) => x.key !== key));
+          setByRole((m) => ({ ...m, [role]: (m[role] ?? []).filter((u) => u.key !== key) }));
         });
     }
   };
+  const remove = (role: string, key: number) => setByRole((m) => ({ ...m, [role]: (m[role] ?? []).filter((u) => u.key !== key) }));
+  const ids = (role: string) => (byRole[role] ?? []).map((u) => u.asset?.id).filter(Boolean) as string[];
+  const uploading = Object.values(byRole).some((l) => l.some((u) => !u.asset));
+  return { byRole, add, remove, ids, uploading, reset: () => setByRole({}) };
+}
+
+function DropZone({ role, uploads, onAdd, onRemove }: { role: Role; uploads: Upload[]; onAdd: (files: File[]) => void; onRemove: (key: number) => void }) {
+  const ref = useRef<HTMLInputElement>(null);
+  return (
+    <div className="space-y-2">
+      <Label>
+        {role.label} {role.required && <span className="text-muted-foreground">*</span>}
+      </Label>
+      <div
+        onDragOver={(e) => e.preventDefault()}
+        onDrop={(e) => {
+          e.preventDefault();
+          onAdd([...e.dataTransfer.files]);
+        }}
+        className="rounded-xl border border-dashed p-3"
+      >
+        <div className="grid grid-cols-3 gap-2 sm:grid-cols-5">
+          {uploads.map((a) => (
+            <div key={a.key} className="relative aspect-square overflow-hidden rounded-lg border bg-muted">
+              {a.preview || a.asset?.thumbUrl ? (
+                // eslint-disable-next-line @next/next/no-img-element
+                <img src={a.preview ?? a.asset!.thumbUrl!} alt="" className="h-full w-full object-cover" />
+              ) : (
+                <div className="flex h-full flex-col items-center justify-center gap-1 p-1 text-center text-[10px] text-muted-foreground">
+                  <FileAudio className="size-4" />
+                  <span className="line-clamp-2 break-all">{a.name}</span>
+                </div>
+              )}
+              {!a.asset && (
+                <div className="absolute inset-0 flex items-center justify-center bg-black/50 text-xs text-white">
+                  <Loader2 className="mr-1 size-3 animate-spin" /> {Math.round(a.progress * 100)}%
+                </div>
+              )}
+              <button type="button" aria-label="Remove" onClick={() => onRemove(a.key)} className="absolute top-1 right-1 rounded-full bg-black/70 p-0.5 text-white">
+                <X className="size-3" />
+              </button>
+            </div>
+          ))}
+          {(role.many || uploads.length === 0) && (
+            <button
+              type="button"
+              onClick={() => ref.current?.click()}
+              className="flex aspect-square flex-col items-center justify-center gap-1 rounded-lg border border-dashed text-xs text-muted-foreground hover:border-primary hover:text-foreground"
+            >
+              <ImagePlus className="size-5" /> Add
+            </button>
+          )}
+        </div>
+        <p className="mt-2 text-xs text-muted-foreground">{role.hint}. Drop files here or click Add.</p>
+        <input ref={ref} type="file" multiple={role.many} accept={role.accept} className="hidden" onChange={(e) => (onAdd([...(e.target.files ?? [])]), (e.target.value = ""))} />
+      </div>
+    </div>
+  );
+}
+
+export function NewProject() {
+  const router = useRouter();
+  const [mode, setMode] = useState<Mode>("talking_head");
+  const [title, setTitle] = useState("");
+  const [aspect, setAspect] = useState<(typeof ASPECTS)[number]["id"]>("9:16");
+  const [notes, setNotes] = useState("");
+  const [script, setScript] = useState("");
+  const [musicUrl, setMusicUrl] = useState("");
+  const [faceCutbacks, setFaceCutbacks] = useState(true);
+  const [look, setLook] = useState<"none" | "cinematic_warm">("none"); // talking head / best take
+  const [lookIntensity, setLookIntensity] = useState(DEFAULT_GRADE_INTENSITY);
+  const [count, setCount] = useState(3);
+  const [quick, setQuick] = useState(false); // voiceover: the instant first cut without Claude
+  const [voiceTab, setVoiceTab] = useState("upload");
+  const [recording, setRecording] = useState<Blob | null>(null);
+  const [busy, setBusy] = useState<string | null>(null);
+  const up = useUploads();
+  const m = MODES.find((x) => x.id === mode)!;
+  const hasMusic = m.roles.some((r) => r.id === "music") && !(mode === "voiceover_broll" && quick);
+
+  const recordedFile = recording ? new File([recording], `recording.${recording.type.includes("mp4") ? "m4a" : "webm"}`, { type: recording.type }) : null;
+  const missing = m.roles.filter((r) => r.required && !(r.id === "voice" && voiceTab === "record" ? recording : up.ids(r.id).length));
+  const ready = !busy && !up.uploading && missing.length === 0;
 
   const create = async () => {
     try {
-      let finalScript = script.trim();
-      const ids = [...usageIds];
-      if (source === "idea" && !finalScript) {
-        setBusy("Writing your script…");
-        const r = await api<{ title: string; script: string; usageIds: string[] }>("/api/script", { method: "POST", json: { idea, seconds, tone } });
-        ids.push(...r.usageIds);
-        finalScript = r.script;
-        if (!title.trim()) setTitle(r.title);
+      if (mode === "voiceover_broll" && quick) return await createQuick();
+      let voice = up.ids("voice");
+      if (mode === "voiceover_broll" && voiceTab === "record" && recordedFile) {
+        setBusy("Uploading the recording…");
+        voice = [(await uploadAsset(recordedFile, "music")).id];
       }
-      setBusy("Creating project…");
+      setBusy(hasMusic && musicUrl.trim() && !up.ids("music").length ? "Downloading the sound…" : "Starting Claude…");
+      const assets = Object.fromEntries(m.roles.map((r) => [r.id, r.id === "voice" ? voice : up.ids(r.id)]));
       const { project } = await api<{ project: { id: string } }>("/api/projects", {
         method: "POST",
         json: {
           title: title.trim() || undefined,
           aspect,
-          mode: source,
-          prompt: source === "idea" ? idea : source === "script" ? finalScript : undefined,
-          visualMode,
-          assetIds: attached.map((a) => a.asset?.id).filter(Boolean),
-          usageIds: ids,
+          mode,
+          inputs: {
+            assets,
+            notes: notes.trim() || undefined,
+            script: mode === "best_take" && script.trim() ? script.trim() : undefined,
+            musicUrl: hasMusic && musicUrl.trim() ? musicUrl.trim() : undefined,
+            faceCutbacks: mode === "voiceover_broll" ? faceCutbacks : undefined,
+            count: mode === "auto_clip" ? count : undefined,
+            grade: (mode === "talking_head" || mode === "best_take") && look !== "none" ? { look, intensity: lookIntensity } : undefined,
+          },
         },
       });
-      if (source === "voice") {
-        const blob = voiceBlob!;
-        const ext = blob.type.includes("mp4") ? "m4a" : blob.type.includes("webm") ? "webm" : "audio";
-        const name = file && voiceTab === "upload" ? file.name : `recording.${ext}`;
-        const url = await uploadFile(blob, name, "voice", (p) => setBusy(`Uploading ${Math.round(p * 100)}%`));
-        await api(`/api/projects/${project.id}/voice`, { method: "POST", json: { url, name, mime: blob.type, source: voiceTab === "record" ? "recording" : "upload" } });
-      } else {
-        setBusy("Recording the AI voiceover…");
-        await api(`/api/projects/${project.id}/narrate`, { method: "POST", json: { script: finalScript, voice: voiceName, tone } });
-      }
       router.push(`/projects/${project.id}`);
     } catch (e) {
       toast.error((e as Error).message);
@@ -148,207 +216,175 @@ export function NewProject({ gemini, pexels }: { gemini: boolean; pexels: boolea
     }
   };
 
-  const words = script.trim() ? script.trim().split(/\s+/).length : 0;
+  /** The original voice-first flow: transcribe in the worker, scene split, match the library by file name. */
+  const createQuick = async () => {
+    setBusy("Creating project…");
+    const { project } = await api<{ project: { id: string } }>("/api/projects", {
+      method: "POST",
+      json: { title: title.trim() || undefined, aspect, mode: "voice", assetIds: up.ids("broll") },
+    });
+    const voiceAsset = up.byRole.voice?.[0]?.asset;
+    let url: string;
+    let name: string;
+    let mime: string;
+    if (voiceTab === "record" && recording) {
+      name = recordedFile!.name;
+      mime = recording.type;
+      url = await uploadFile(recording, name, "voice", (p) => setBusy(`Uploading ${Math.round(p * 100)}%`));
+    } else {
+      url = voiceAsset!.url;
+      name = voiceAsset!.name;
+      mime = voiceAsset!.type === "video" ? "video/mp4" : "audio/mpeg";
+    }
+    await api(`/api/projects/${project.id}/voice`, { method: "POST", json: { url, name, mime, source: voiceTab === "record" ? "recording" : "upload" } });
+    router.push(`/projects/${project.id}`);
+  };
 
   return (
     <div className="mx-auto max-w-3xl space-y-8">
       <div>
-        <h1 className="text-2xl font-semibold tracking-tight">New video</h1>
-        <p className="text-sm text-muted-foreground">Start from an idea, a script, or your own voice. You can edit everything afterwards.</p>
+        <h1 className="text-2xl font-semibold tracking-tight">New edit</h1>
+        <p className="text-sm text-muted-foreground">Pick how you want to edit. Claude plans the edit on your machine and shows it to you for approval; then everything is editable on the timeline.</p>
       </div>
 
-      {/* ------------------------------------------------ source */}
-      <Tabs value={source} onValueChange={(v) => setSource(v as Source)}>
-        <TabsList className="grid h-auto w-full grid-cols-3">
-          <TabsTrigger value="idea" className="py-2" disabled={!gemini}>
-            <Lightbulb /> Idea
-          </TabsTrigger>
-          <TabsTrigger value="script" className="py-2" disabled={!gemini}>
-            <PenLine /> Script
-          </TabsTrigger>
-          <TabsTrigger value="voice" className="py-2">
-            <Mic /> My voice
-          </TabsTrigger>
-        </TabsList>
+      {/* ------------------------------------------------ mode */}
+      <div className="grid gap-2 sm:grid-cols-2 lg:grid-cols-3">
+        {MODES.map((x) => (
+          <button
+            key={x.id}
+            type="button"
+            onClick={() => {
+              setMode(x.id);
+              up.reset();
+            }}
+            className={cn("rounded-xl border p-3 text-left transition", mode === x.id ? "border-primary bg-primary/10" : "hover:border-white/25")}
+          >
+            <div className="flex items-center gap-2 text-sm font-medium">
+              <x.icon className="size-4 text-primary" /> {x.label}
+            </div>
+            <div className="mt-1 text-xs text-muted-foreground">{x.body}</div>
+          </button>
+        ))}
+      </div>
 
-        <TabsContent value="idea" className="space-y-4 pt-4">
+      {/* ------------------------------------------------ inputs */}
+      <div className="space-y-5">
+        {m.roles.map((r) =>
+          r.id === "voice" ? (
+            <div key={r.id} className="space-y-2">
+              <Label>{r.label} *</Label>
+              <Tabs value={voiceTab} onValueChange={setVoiceTab}>
+                <TabsList className="w-full">
+                  <TabsTrigger value="upload">
+                    <Upload /> Upload
+                  </TabsTrigger>
+                  <TabsTrigger value="record">
+                    <Mic /> Record now
+                  </TabsTrigger>
+                </TabsList>
+                <TabsContent value="upload">
+                  <DropZone role={r} uploads={up.byRole[r.id] ?? []} onAdd={(f) => up.add(r.id, f, false, f[0]?.type.startsWith("audio/"))} onRemove={(k) => up.remove(r.id, k)} />
+                </TabsContent>
+                <TabsContent value="record">
+                  <Recorder onRecorded={setRecording} />
+                </TabsContent>
+              </Tabs>
+            </div>
+          ) : (
+            <DropZone key={r.id} role={r} uploads={up.byRole[r.id] ?? []} onAdd={(f) => up.add(r.id, f, r.many, r.accept === "audio/*")} onRemove={(k) => up.remove(r.id, k)} />
+          ),
+        )}
+
+        {hasMusic && (
           <div className="space-y-2">
-            <Label htmlFor="idea">What&apos;s your video about?</Label>
-            <Textarea
-              id="idea"
-              value={idea}
-              onChange={(e) => setIdea(e.target.value)}
-              placeholder="Describe your idea, audience, key points, call to action… The more detail, the better the script."
-              className="min-h-44 resize-y text-base leading-relaxed"
-              maxLength={4000}
-            />
-            <div className="flex flex-wrap gap-1.5">
-              {EXAMPLES.map((ex) => (
-                <button key={ex} type="button" onClick={() => setIdea(ex)} className="rounded-full border px-2.5 py-1 text-xs text-muted-foreground hover:border-primary hover:text-foreground">
-                  {ex}
-                </button>
-              ))}
-            </div>
+            <Label htmlFor="musicUrl">…or a link to the sound (optional)</Label>
+            <Input id="musicUrl" value={musicUrl} onChange={(e) => setMusicUrl(e.target.value)} placeholder="YouTube / Shorts link, Instagram /reel/ link, or an .mp3 URL" />
+            <p className="text-xs text-muted-foreground">
+              {up.ids("music").length ? "An uploaded track wins over the link. " : ""}Downloaded with yt-dlp when you start (timing only / personal use until you confirm the rights). Instagram /reels/audio/ pages can&apos;t be downloaded; use a /reel/ link that uses the sound.
+            </p>
           </div>
-          <NarrationOptions {...{ seconds, setSeconds, tone, setTone, voiceName, setVoiceName }} showLength />
-          <div className="space-y-2 rounded-xl border bg-card/40 p-4">
-            <div className="flex items-center justify-between gap-2">
-              <Label>Script</Label>
-              <Button size="sm" variant="secondary" onClick={writeScript} disabled={writing || !idea.trim()}>
-                {writing ? <Loader2 className="animate-spin" /> : <Wand2 />} {script ? "Rewrite" : "Write script"}
-              </Button>
+        )}
+        {mode === "best_take" && (
+          <div className="space-y-2">
+            <Label htmlFor="script">Script (optional)</Label>
+            <Textarea id="script" value={script} onChange={(e) => setScript(e.target.value)} rows={6} placeholder="Paste the script to align the takes line by line. Without it, the takes are aligned to each other." />
+          </div>
+        )}
+        {(mode === "talking_head" || mode === "best_take") && (
+          <div className="space-y-3 rounded-xl border p-3">
+            <div className="flex items-center justify-between gap-3">
+              <span className="text-sm">
+                Look
+                <span className="block text-xs text-muted-foreground">Applied to every clip when you approve the plan; change it per clip later</span>
+              </span>
+              <div className="grid grid-cols-2 gap-1 rounded-lg bg-muted p-1">
+                {(["none", "cinematic_warm"] as const).map((v) => (
+                  <button
+                    key={v}
+                    type="button"
+                    onClick={() => setLook(v)}
+                    className={cn("rounded-md px-2.5 py-1 text-xs transition", look === v ? "bg-background text-foreground shadow" : "text-muted-foreground hover:text-foreground")}
+                  >
+                    {v === "none" ? "Natural" : "Cinematic Warm"}
+                  </button>
+                ))}
+              </div>
             </div>
-            {script ? (
-              <>
-                <Textarea value={script} onChange={(e) => setScript(e.target.value)} className="min-h-48 resize-y text-base leading-relaxed" />
-                <p className="text-xs text-muted-foreground">
-                  {words} words · about {Math.round(words / 2.4)}s spoken. Edit freely; this is exactly what the AI voice will say.
-                </p>
-              </>
-            ) : (
-              <p className="text-sm text-muted-foreground">Preview and edit the script before creating, or skip this and we&apos;ll write it for you.</p>
+            {look !== "none" && (
+              <div className="space-y-1.5">
+                <div className="flex justify-between text-xs text-muted-foreground">
+                  <span>Intensity</span>
+                  <span>{Math.round(lookIntensity * 100)}%</span>
+                </div>
+                <Slider value={[lookIntensity]} min={0} max={1} step={0.05} onValueChange={(v) => setLookIntensity(v[0])} aria-label="Look intensity" />
+                <p className="text-xs text-muted-foreground">Warm highlights, teal shadows, soft blacks, calmer background colours, subtle vignette. Skin tones are protected.</p>
+              </div>
             )}
           </div>
-        </TabsContent>
-
-        <TabsContent value="script" className="space-y-4 pt-4">
+        )}
+        {mode === "voiceover_broll" && (
+          <div className="space-y-3 rounded-xl border p-3">
+            <label className="flex items-center justify-between gap-3 text-sm">
+              <span>
+                Cut back to my face for key lines
+                <span className="block text-xs text-muted-foreground">Only when the voice recording is a video of you</span>
+              </span>
+              <Switch checked={faceCutbacks} onCheckedChange={setFaceCutbacks} disabled={quick} />
+            </label>
+            <label className="flex items-center justify-between gap-3 text-sm">
+              <span>
+                Quick cut (no Claude)
+                <span className="block text-xs text-muted-foreground">Instant first cut that matches b-roll by file name, without the review step</span>
+              </span>
+              <Switch checked={quick} onCheckedChange={setQuick} />
+            </label>
+          </div>
+        )}
+        {mode === "auto_clip" && (
           <div className="space-y-2">
-            <Label htmlFor="script">Your script</Label>
+            <Label htmlFor="count">How many shorts</Label>
+            <Input id="count" type="number" min={1} max={10} value={count} onChange={(e) => setCount(Math.max(1, Math.min(10, Number(e.target.value) || 1)))} className="w-24" />
+          </div>
+        )}
+        {!(mode === "voiceover_broll" && quick) && (
+          <div className="space-y-2">
+            <Label htmlFor="notes">Brief for Claude (optional)</Label>
             <Textarea
-              id="script"
-              value={script}
-              onChange={(e) => setScript(e.target.value)}
-              placeholder="Paste or write the exact words for the voiceover."
-              className="min-h-64 resize-y text-base leading-relaxed"
-              maxLength={6000}
+              id="notes"
+              value={notes}
+              onChange={(e) => setNotes(e.target.value)}
+              rows={3}
+              placeholder={mode === "music" ? "Quote / hook text, target length, the vibe…" : "Audience, tone, target length, anything to keep or cut…"}
             />
-            <p className="text-xs text-muted-foreground">{words ? `${words} words · about ${Math.round(words / 2.4)}s spoken` : "Tip: short sentences read best."}</p>
           </div>
-          <NarrationOptions {...{ seconds, setSeconds, tone, setTone, voiceName, setVoiceName }} />
-        </TabsContent>
-
-        <TabsContent value="voice" className="pt-4">
-          <Tabs value={voiceTab} onValueChange={setVoiceTab}>
-            <TabsList className="w-full">
-              <TabsTrigger value="upload">
-                <Upload /> Upload recording
-              </TabsTrigger>
-              <TabsTrigger value="record">
-                <Mic /> Record now
-              </TabsTrigger>
-            </TabsList>
-            <TabsContent value="upload">
-              <button
-                type="button"
-                onClick={() => fileRef.current?.click()}
-                onDragOver={(e) => e.preventDefault()}
-                onDrop={(e) => {
-                  e.preventDefault();
-                  const f = e.dataTransfer.files[0];
-                  if (f) setFile(f);
-                }}
-                className="flex w-full flex-col items-center gap-2 rounded-xl border border-dashed p-8 text-center hover:border-white/30"
-              >
-                <FileAudio className="size-8 text-muted-foreground" />
-                {file ? (
-                  <>
-                    <span className="text-sm font-medium">{file.name}</span>
-                    <span className="text-xs text-muted-foreground">{(file.size / 1e6).toFixed(1)} MB · click to change</span>
-                  </>
-                ) : (
-                  <>
-                    <span className="text-sm font-medium">Drop an audio or video file</span>
-                    <span className="text-xs text-muted-foreground">MP3, M4A, WAV, WebM, MP4, MOV… we only use the sound</span>
-                  </>
-                )}
-              </button>
-              <input ref={fileRef} type="file" accept="audio/*,video/*" className="hidden" onChange={(e) => setFile(e.target.files?.[0] ?? null)} />
-            </TabsContent>
-            <TabsContent value="record">
-              <Recorder onRecorded={setRecording} />
-            </TabsContent>
-          </Tabs>
-        </TabsContent>
-      </Tabs>
-
-      {/* ------------------------------------------------ visuals */}
-      <div className="space-y-3">
-        <Label>Your photos & videos (optional)</Label>
-        <div
-          onDragOver={(e) => e.preventDefault()}
-          onDrop={(e) => {
-            e.preventDefault();
-            addMedia(e.dataTransfer.files);
-          }}
-          className="rounded-xl border border-dashed p-3"
-        >
-          <div className="grid grid-cols-3 gap-2 sm:grid-cols-5">
-            {attached.map((a) => (
-              <div key={a.key} className="relative aspect-square overflow-hidden rounded-lg border bg-muted">
-                {a.preview || a.asset?.thumbUrl ? (
-                  // eslint-disable-next-line @next/next/no-img-element
-                  <img src={a.preview ?? a.asset!.thumbUrl!} alt="" className="h-full w-full object-cover" />
-                ) : (
-                  <div className="flex h-full items-center justify-center p-1 text-center text-[10px] text-muted-foreground">{a.name}</div>
-                )}
-                {!a.asset && (
-                  <div className="absolute inset-0 flex items-center justify-center bg-black/50 text-xs text-white">
-                    <Loader2 className="mr-1 size-3 animate-spin" /> {Math.round(a.progress * 100)}%
-                  </div>
-                )}
-                <button
-                  type="button"
-                  aria-label="Remove"
-                  onClick={() => setAttached((list) => list.filter((x) => x.key !== a.key))}
-                  className="absolute top-1 right-1 rounded-full bg-black/70 p-0.5 text-white"
-                >
-                  <X className="size-3" />
-                </button>
-              </div>
-            ))}
-            <button
-              type="button"
-              onClick={() => mediaRef.current?.click()}
-              className="flex aspect-square flex-col items-center justify-center gap-1 rounded-lg border border-dashed text-xs text-muted-foreground hover:border-primary hover:text-foreground"
-            >
-              <ImagePlus className="size-5" /> Add
-            </button>
-          </div>
-          <p className="mt-2 text-xs text-muted-foreground">These are used first and matched to the scenes they fit. Drop files here or click Add.</p>
-          <input ref={mediaRef} type="file" multiple accept="image/*,video/*" className="hidden" onChange={(e) => (addMedia(e.target.files), (e.target.value = ""))} />
-        </div>
-
-        <Label className="pt-2">For scenes without your media</Label>
-        <div className="grid gap-2 sm:grid-cols-3">
-          {(
-            [
-              { id: "auto", title: "Best available", body: pexels ? "Your library, then stock video, then AI images" : "Your library, then AI images", disabled: !gemini && !pexels },
-              { id: "ai", title: "AI-generated images", body: "A custom image for every scene, in one consistent style", disabled: !gemini },
-              { id: "stock", title: "Stock footage", body: pexels ? "Real video clips from Pexels" : "Needs PEXELS_API_KEY", disabled: !pexels },
-            ] as const
-          ).map((o) => (
-            <button
-              key={o.id}
-              type="button"
-              disabled={o.disabled}
-              onClick={() => setVisualMode(o.id)}
-              className={cn("rounded-xl border p-3 text-left transition disabled:opacity-40", visualMode === o.id ? "border-primary bg-primary/10" : "hover:border-white/25")}
-            >
-              <div className="flex items-center gap-1.5 text-sm font-medium">
-                {o.id === "ai" && <Sparkles className="size-3.5 text-violet-400" />}
-                {o.title}
-              </div>
-              <div className="mt-0.5 text-xs text-muted-foreground">{o.body}</div>
-            </button>
-          ))}
-        </div>
+        )}
       </div>
 
       {/* ------------------------------------------------ format + title */}
       <div className="grid gap-6 sm:grid-cols-[1fr_1.3fr]">
         <div className="space-y-2">
           <Label htmlFor="title">Title (optional)</Label>
-          <Input id="title" value={title} onChange={(e) => setTitle(e.target.value)} placeholder="We'll suggest one" maxLength={100} />
+          <Input id="title" value={title} onChange={(e) => setTitle(e.target.value)} placeholder="Untitled video" maxLength={100} />
         </div>
         <div className="space-y-2">
           <Label>Format</Label>
@@ -372,81 +408,11 @@ export function NewProject({ gemini, pexels }: { gemini: boolean; pexels: boolea
       <div className="space-y-2 pb-10">
         <Button size="lg" className="brand-gradient w-full text-white" disabled={!ready} onClick={create}>
           {busy ? <Loader2 className="animate-spin" /> : <Sparkles />}
-          {busy ?? (uploading ? "Waiting for uploads…" : "Create video")}
+          {busy ?? (up.uploading ? "Waiting for uploads…" : missing.length ? `Add ${missing[0].label.toLowerCase()}` : mode === "voiceover_broll" && quick ? "Create video" : "Plan the edit")}
         </Button>
         <p className="text-center text-xs text-muted-foreground">
-          {source === "voice" ? "Next: transcription with word timings" : "Next: AI voiceover, word timings"}, scene split, visuals and captions, then the editor.
+          {mode === "voiceover_broll" && quick ? "Next: transcription with word timings, scene split, visuals and captions, then the editor." : m.next}
         </p>
-      </div>
-    </div>
-  );
-}
-
-function NarrationOptions({
-  seconds,
-  setSeconds,
-  tone,
-  setTone,
-  voiceName,
-  setVoiceName,
-  showLength,
-}: {
-  seconds: number;
-  setSeconds: (n: number) => void;
-  tone: string;
-  setTone: (s: string) => void;
-  voiceName: string;
-  setVoiceName: (s: string) => void;
-  showLength?: boolean;
-}) {
-  return (
-    <div className={cn("grid gap-3", showLength ? "sm:grid-cols-3" : "sm:grid-cols-2")}>
-      {showLength && (
-        <div className="space-y-1.5">
-          <Label className="text-xs text-muted-foreground">Length</Label>
-          <Select value={String(seconds)} onValueChange={(v) => setSeconds(Number(v))}>
-            <SelectTrigger className="w-full">
-              <SelectValue />
-            </SelectTrigger>
-            <SelectContent>
-              {LENGTHS.map((l) => (
-                <SelectItem key={l} value={String(l)}>
-                  ~{l} seconds
-                </SelectItem>
-              ))}
-            </SelectContent>
-          </Select>
-        </div>
-      )}
-      <div className="space-y-1.5">
-        <Label className="text-xs text-muted-foreground">Tone</Label>
-        <Select value={tone} onValueChange={setTone}>
-          <SelectTrigger className="w-full capitalize">
-            <SelectValue />
-          </SelectTrigger>
-          <SelectContent>
-            {TONES.map((t) => (
-              <SelectItem key={t} value={t} className="capitalize">
-                {t}
-              </SelectItem>
-            ))}
-          </SelectContent>
-        </Select>
-      </div>
-      <div className="space-y-1.5">
-        <Label className="text-xs text-muted-foreground">AI voice</Label>
-        <Select value={voiceName} onValueChange={setVoiceName}>
-          <SelectTrigger className="w-full">
-            <SelectValue />
-          </SelectTrigger>
-          <SelectContent>
-            {VOICES.map((v) => (
-              <SelectItem key={v.id} value={v.id}>
-                {v.label}
-              </SelectItem>
-            ))}
-          </SelectContent>
-        </Select>
       </div>
     </div>
   );

@@ -1,0 +1,19 @@
+[Script Info]
+ScriptType: v4.00+
+PlayResX: 1080
+PlayResY: 1920
+WrapStyle: 2
+ScaledBorderAndShadow: yes
+
+[V4+ Styles]
+Format: Name, Fontname, Fontsize, PrimaryColour, SecondaryColour, OutlineColour, BackColour, Bold, Italic, Underline, StrikeOut, ScaleX, ScaleY, Spacing, Angle, BorderStyle, Outline, Shadow, Alignment, MarginL, MarginR, MarginV, Encoding
+Style: Hook,Times New Roman,124,&H00FFFFFF,&H00FFFFFF,&H00101010,&H90000000,-1,0,0,0,80,100,0,0,1,5,3,8,60,60,330,1
+Style: Pop,Times New Roman,96,&H00FFFFFF,&H00FFFFFF,&H00101010,&H90000000,-1,0,0,0,80,100,0,0,1,4,3,8,60,60,330,1
+Style: Reveal,Times New Roman,108,&H00FFFFFF,&H00FFFFFF,&H00101010,&H90000000,-1,0,0,0,80,100,0,0,1,5,3,2,60,60,410,1
+
+[Events]
+Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text
+Dialogue: 0,0:00:00.00,0:00:02.46,Hook,,0,0,0,,consistency looks\N{\c&H000AD6FF&}boring...
+Dialogue: 0,0:00:04.70,0:00:06.06,Pop,,0,0,0,,{\fad(80,0)}no days off
+Dialogue: 0,0:00:06.12,0:00:07.50,Pop,,0,0,0,,{\fad(80,0)}rep after rep
+Dialogue: 0,0:00:10.40,0:00:17.58,Reveal,,0,0,0,,{\fad(150,0)}...until it looks\Nlike {\c&H000AD6FF&}this.

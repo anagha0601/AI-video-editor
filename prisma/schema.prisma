@@ -19,6 +19,7 @@ model User {
   projects     Project[]
   assets       MediaAsset[]
   renders      RenderJob[]
+  agentJobs    AgentJob[]
 }
 
 model Project {
@@ -28,12 +29,19 @@ model Project {
   title         String
   aspect        String            @default("9:16") // "9:16" | "16:9" | "1:1"
   // draft -> transcribing -> transcribed -> building -> ready -> rendered; or failed
+  // edit modes: planning -> review (-> planning on feedback) -> ready; plan_failed
   status        String            @default("draft")
   statusMessage String?
   thumbnailUrl  String?
   duration      Float             @default(0)
   isSample      Boolean           @default(false)
-  mode          String            @default("voice") // voice | idea | script (how the voiceover was made)
+  // voice = the voice-first auto first cut; the edit modes plan with Claude first (src/server/modes.ts):
+  // music | talking_head | best_take | voiceover_broll | auto_clip
+  mode          String            @default("voice")
+  inputs        Json? // edit modes: { [role]: assetId | assetId[], options } chosen on the new-edit page
+  plan          Json? // edit modes: the current plan.json (as the user edited it); status planning -> review -> ready
+  planJobId     String?
+  parentId      String? // auto-clip: the long-video project a short was cut from
   prompt        String? // the idea or script text for idea/script projects
   // Where scene visuals come from after the user's own media:
   // auto = library -> stock -> AI images; ai = AI images; stock = library -> stock
@@ -46,6 +54,7 @@ model Project {
   timeline      Timeline?
   versions      TimelineVersion[]
   renders       RenderJob[]
+  agentJobs     AgentJob[]
 
   @@index([userId, updatedAt])
 }
@@ -128,6 +137,8 @@ model RenderJob {
   thumbUrl   String?
   duration   Float?
   error      String?
+  // checks on the exported file (worker/audio_master.py: loudness, true peak, clipping)
+  report     Json?
   attempts   Int             @default(0)
   lockedAt   DateTime?
   startedAt  DateTime?
@@ -138,20 +149,37 @@ model RenderJob {
   @@index([projectId, createdAt])
 }
 
-// One row per Gemini API response (every call goes through src/server/gemini.ts).
-model ApiUsage {
-  id             String   @id @default(cuid())
-  createdAt      DateTime @default(now())
-  model          String
-  feature        String // script | scene_split | ai_edit | tagging | tts | image
-  projectId      String?
-  userId         String?
-  inputTokens    Int      @default(0)
-  outputTokens   Int      @default(0)
-  thinkingTokens Int      @default(0)
-  costUsd        Float    @default(0)
+// One headless `claude -p` run (or a resumed turn of one). The agent runner
+// (agent/runner.ts) claims queued rows one at a time; the full stream-json log is
+// written to logPath, and structured results to outputFile in the project folder.
+model AgentJob {
+  id              String    @id @default(cuid())
+  userId          String
+  user            User      @relation(fields: [userId], references: [id], onDelete: Cascade)
+  projectId       String?
+  project         Project?  @relation(fields: [projectId], references: [id], onDelete: Cascade)
+  kind            String // selftest | ai_edit | enhance | upscale | ...
+  exec            String? // JSON argv: a local command job (no claude), e.g. a Real-ESRGAN upscale
+  title           String
+  status          String    @default("queued") // queued | running | done | failed | cancelled
+  prompt          String
+  sessionId       String // claude session id: new sessions use --session-id, resumed ones --resume
+  resume          Boolean   @default(false)
+  outputFile      String? // relative to the project folder, e.g. "media-check.json"
+  schema          String? // schema name in src/agent/schemas.ts
+  timeoutSec      Int       @default(900)
+  cancelRequested Boolean   @default(false)
+  pid             Int?
+  error           String?
+  resultText      String?
+  costUsd         Float? // claude's usage estimate; not billed on a subscription
+  turns           Int?
+  fixAttempts     Int       @default(0)
+  logPath         String
+  createdAt       DateTime  @default(now())
+  startedAt       DateTime?
+  finishedAt      DateTime?
 
-  @@index([createdAt])
-  @@index([projectId])
-  @@index([userId, createdAt])
+  @@index([status, createdAt])
+  @@index([projectId, createdAt])
 }

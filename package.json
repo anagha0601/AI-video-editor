@@ -2,6 +2,7 @@
   "name": "reelsmith",
   "version": "0.1.0",
   "private": true,
+  "license": "UNLICENSED",
   "scripts": {
     "dev": "next dev",
     "build": "prisma generate && next build",
@@ -9,12 +10,11 @@
     "lint": "eslint",
     "postinstall": "prisma generate",
     "db:push": "prisma db push",
-    "check:ai": "node scripts/check-ai.mjs"
+    "agent": "tsx agent/runner.ts"
   },
   "dependencies": {
     "@aws-sdk/client-s3": "^3.1142.0",
     "@aws-sdk/s3-request-presigner": "^3.1142.0",
-    "@google/genai": "^2.24.0",
     "@prisma/client": "^6.19.3",
     "bcryptjs": "^3.0.3",
     "class-variance-authority": "^0.7.1",
@@ -45,6 +45,7 @@
     "eslint-config-next": "15.5.26",
     "prisma": "^6.19.3",
     "tailwindcss": "^4",
+    "tsx": "^4.23.15",
     "typescript": "^5"
   }
 }

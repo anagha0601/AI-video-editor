@@ -86,6 +86,17 @@ export async function inspectFile(file: File): Promise<MediaInfo> {
   }
 }
 
+export interface LinkAudioAnalysis {
+  duration: number;
+  tempo: number | null;
+  beatPeriod: number | null;
+  beats: number[];
+  strongOnsets: number[];
+  drops: { t: number; score: number }[]; // best first
+  lufs: number | null;
+  truePeak: number | null; // dBTP
+}
+
 export interface AssetDTO {
   id: string;
   type: "video" | "image" | "audio" | "music";
@@ -97,7 +108,16 @@ export interface AssetDTO {
   width: number | null;
   height: number | null;
   tags: string[];
-  meta: { peaks?: number[]; peaksPerSec?: number; hasAudio?: boolean; author?: string } | null;
+  meta: {
+    peaks?: number[];
+    peaksPerSec?: number;
+    hasAudio?: boolean;
+    author?: string;
+    // link-sourced music (Music panel → Paste link)
+    link?: { url: string; kind: "instagram" | "youtube" | "direct"; fetchedAt: string };
+    rights?: boolean; // false = timing only / personal use
+    analysis?: LinkAudioAnalysis;
+  } | null;
   createdAt: string;
 }
 

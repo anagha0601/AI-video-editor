@@ -1,0 +1,128 @@
+{
+ "src_dir": "C:/path/to/clips",
+ "fps": 30,
+ "w": 1080,
+ "h": 1920,
+ "shots": [
+  {
+   "clip": "clip05.mp4",
+   "start": 0.0,
+   "end": 2.46,
+   "in": 21.1,
+   "zoom": 1.1,
+   "cx": 0.55,
+   "cy": 0.62,
+   "grade": "grey"
+  },
+  {
+   "clip": "clip01.mp4",
+   "start": 2.46,
+   "end": 4.6,
+   "in": 13.6,
+   "zoom": 1.0,
+   "grade": "grey"
+  },
+  {
+   "clip": "clip08.mp4",
+   "start": 4.6,
+   "end": 6.06,
+   "in": 16.5,
+   "zoom": 1.1,
+   "cx": 0.5,
+   "cy": 0.6,
+   "grade": "grey"
+  },
+  {
+   "clip": "clip10.mp4",
+   "start": 6.06,
+   "end": 7.5,
+   "in": 27.0,
+   "zoom": 1.0,
+   "grade": "grey"
+  },
+  {
+   "clip": "clip09.mp4",
+   "start": 7.5,
+   "end": 8.22,
+   "in": 9.85,
+   "fit": "crop",
+   "cx": 0.6,
+   "zoom": 1.0,
+   "grade": "grey"
+  },
+  {
+   "clip": "clip06.mp4",
+   "start": 8.22,
+   "end": 8.94,
+   "in": 31.0,
+   "zoom": 1.1,
+   "grade": "grey"
+  },
+  {
+   "clip": "clip05.mp4",
+   "start": 8.94,
+   "end": 9.66,
+   "in": 25.78,
+   "zoom": 1.0,
+   "grade": "grey"
+  },
+  {
+   "clip": "clip07.mp4",
+   "start": 9.66,
+   "end": 10.36,
+   "in": 24.0,
+   "zoom": 1.1,
+   "grade": "grey"
+  },
+  {
+   "clip": "clip03.mp4",
+   "start": 10.36,
+   "end": 14.7,
+   "in": 2.2,
+   "out": 4.85,
+   "push": [
+    1.0,
+    1.08
+   ],
+   "cx": 0.5,
+   "cy": 0.02
+  },
+  {
+   "clip": "clip02.mp4",
+   "start": 14.7,
+   "end": 17.58,
+   "in": 16.45,
+   "out": 19.15,
+   "zoom": 1.06,
+   "cx": 0.5,
+   "cy": 0.5
+  },
+  {
+   "clip": "clip04.mp4",
+   "start": 17.58,
+   "end": 21.5,
+   "in": 31.9,
+   "out": 35.0,
+   "push": [
+    1.1,
+    1.25
+   ],
+   "cx": 0.5,
+   "cy": 0.62
+  }
+ ],
+ "text_ass": "reel.ass",
+ "audio": [
+  {
+   "name": "final_preview",
+   "music": "music.mp3",
+   "music_start": 0.0
+  },
+  {
+   "name": "final_nomusic",
+   "bed": "clip08.mp4",
+   "bed_start": 20.0
+  }
+ ],
+ "lufs": -14
+}

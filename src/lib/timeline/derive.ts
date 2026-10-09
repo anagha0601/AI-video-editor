@@ -3,8 +3,13 @@
 import type {
   AnyClip,
   AudioClip,
+  BeatFx,
   CaptionSettings,
+  FxType,
+  Enhance,
   Filters,
+  Grade,
+  GradeLook,
   KenBurns,
   TextAnimIn,
   TextAnimOut,
@@ -297,6 +302,76 @@ export function colorOps(f: Filters) {
   };
 }
 
+/** Combined Enhance color+match curve per channel: y = clip(((x-lo)/(hi-lo))^(1/gamma) * gain). Mirrors curve() in worker/enhance.py. */
+export function enhanceCurve(e: Enhance | null | undefined) {
+  const c = e?.color?.on ? e.color : null;
+  const m = e?.match?.on ? e.match : null;
+  if (!c && !m) return null;
+  const gm = m?.gamma ?? 1;
+  const kc = c?.gains ?? [1, 1, 1];
+  const km = m?.gains ?? [1, 1, 1];
+  const lo = c?.lo ?? 0;
+  return {
+    lo,
+    hi: Math.max(c?.hi ?? 1, lo + 0.05),
+    gamma: (c?.gamma ?? 1) * gm,
+    gains: [0, 1, 2].map((i) => kc[i] ** (1 / gm) * km[i]) as [number, number, number],
+  };
+}
+
+/** SVG feFunc tableValues (n samples) for one channel of an enhance curve. */
+export function enhanceTable(cv: NonNullable<ReturnType<typeof enhanceCurve>>, ch: 0 | 1 | 2, n = 33) {
+  const out: number[] = [];
+  for (let i = 0; i < n; i++) {
+    const x = i / (n - 1);
+    const y = Math.min(1, Math.max(0, (x - cv.lo) / (cv.hi - cv.lo))) ** (1 / cv.gamma) * cv.gains[ch];
+    out.push(Math.round(Math.min(1, Math.max(0, y)) * 10000) / 10000);
+  }
+  return out;
+}
+
+// ---------------------------------------------------------------- grade (looks)
+
+/** Mirrors LOOKS in worker/grade.py. The render applies a 3D LUT (incl. skin protection); the preview uses the
+ * per-channel tone curve, a global saturation cut for the background desaturation, and the same vignette. */
+export const GRADE_LOOKS = {
+  cinematic_warm: {
+    label: "Cinematic Warm",
+    contrast: 0.25,
+    lift: 0.035,
+    roll: 0.975,
+    shadows: [-0.025, 0.008, 0.03],
+    highlights: [0.045, 0.012, -0.04],
+    bgDesat: 0.25,
+    vignette: 0.3,
+  },
+} as const satisfies Record<GradeLook, unknown>;
+export const GRADE_VIGNETTE = { r0: 0.45, r1: 1.05 };
+
+/** Per-channel tone curve at intensity k (worker/grade.py tone(), blended toward identity). */
+export function gradeTable(g: Grade, ch: 0 | 1 | 2, n = 33) {
+  const L = GRADE_LOOKS[g.look];
+  const k = clamp(g.intensity, 0, 1);
+  const out: number[] = [];
+  for (let i = 0; i < n; i++) {
+    const x = i / (n - 1);
+    const sx = x - (L.contrast * Math.sin(2 * Math.PI * x)) / (2 * Math.PI);
+    const y = clamp(L.lift + (L.roll - L.lift) * sx + L.shadows[ch] * (1 - x) ** 2 + L.highlights[ch] * x ** 2, 0, 1);
+    out.push(Math.round(clamp(x + k * (y - x), 0, 1) * 10000) / 10000);
+  }
+  return out;
+}
+
+/** Preview approximation of the background desaturation (skin is protected in the render only). */
+export const gradeSaturation = (g: Grade) => 1 - GRADE_LOOKS[g.look].bgDesat * clamp(g.intensity, 0, 1) * 0.6;
+
+/** Vignette darkening (0..1) at radius r (fraction of the half-diagonal); as vignette_alpha() in grade.py. */
+export function gradeVignetteAt(g: Grade, r: number) {
+  return GRADE_LOOKS[g.look].vignette * clamp(g.intensity, 0, 1) * smoothstep(GRADE_VIGNETTE.r0, GRADE_VIGNETTE.r1, r);
+}
+
+export const hasGrade = (g: Grade | null | undefined): g is Grade => !!g && g.look in GRADE_LOOKS && g.intensity > 0.005;
+
 // ---------------------------------------------------------------- motion
 
 /** Ken Burns window at progress p (0..1): zoom z, and window position fx/fy (0..1 of free space). */
@@ -349,6 +424,49 @@ export function textAnimState(
     if (c.animOut === "pop") scale = TEXT_POP_FROM + (1 - TEXT_POP_FROM) * pout;
   }
   return { alpha, dy, scale };
+}
+
+// ---------------------------------------------------------------- beat effects
+// worker/timeline.py fx_exprs() writes the same formulas as ffmpeg expressions (perspective + eq). u = (t - fx.t) / duration.
+//   punch: zoom += s(1-u)^2      shake: zoom += 2.2 s (1-u), dx += s(1-u) sin(2pi 17 (t-t0)), dy += 0.7 s(1-u) sin(2pi 11 (t-t0) + 1.3)
+//   flash: brightness += s(1-u)^2
+// dx/dy are fractions of the frame, clamped to the room the zoom leaves, so the frame edge never shows.
+export const FX_SHAKE = { zoom: 2.2, fx: 17, fy: 11, ky: 0.7, phase: 1.3 } as const;
+export const FX_DEFAULTS: Record<FxType, { strength: number; duration: number; max: number }> = {
+  punch: { strength: 0.08, duration: 0.3, max: 0.3 },
+  shake: { strength: 0.015, duration: 0.35, max: 0.05 },
+  flash: { strength: 0.5, duration: 0.2, max: 1 },
+};
+
+/** Zoom, offset (fractions of the frame) and added brightness of the beat effects at timeline time t. */
+export function fxAt(fx: BeatFx[] | undefined, t: number) {
+  let zs = 0,
+    dx = 0,
+    dy = 0,
+    flash = 0;
+  for (const e of fx ?? []) {
+    const r = t - e.t;
+    if (r < 0 || r >= e.duration) continue;
+    const v = 1 - r / e.duration;
+    if (e.type === "punch") zs += e.strength * v * v;
+    else if (e.type === "flash") flash += e.strength * v * v;
+    else {
+      zs += FX_SHAKE.zoom * e.strength * v;
+      dx += e.strength * v * Math.sin(2 * Math.PI * FX_SHAKE.fx * r);
+      dy += FX_SHAKE.ky * e.strength * v * Math.sin(2 * Math.PI * FX_SHAKE.fy * r + FX_SHAKE.phase);
+    }
+  }
+  const z = 1 + zs;
+  const room = (1 - 1 / z) / 2;
+  return { z, dx: clamp(dx, -room, room), dy: clamp(dy, -room, room), flash: Math.min(1, flash) };
+}
+
+/** xfade fadewhite at progress p (0 = previous clip, 1 = this clip): weights of the previous clip, this clip and white. */
+export function fadeWhiteWeights(p: number) {
+  const P = 1 - p; // xfade's progress runs 1 -> 0
+  const wA = P * smoothstep(0.8, 1, P);
+  const wB = (1 - P) * (1 - smoothstep(0.2, 1, P));
+  return { wA, wB, wW: Math.max(0, 1 - wA - wB) };
 }
 
 /** Previous clip on the same track that ends where `clip` starts (for transitions). */

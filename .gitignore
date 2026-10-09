@@ -1,6 +1,11 @@
-# See https://help.github.com/articles/ignoring-files/ for more about ignoring files.
+# ---------- secrets ----------
+.env
+.env.*
+!.env.example
+*.pem
+*.key
 
-# dependencies
+# ---------- dependencies / build ----------
 /node_modules
 /.pnp
 .pnp.*
@@ -9,47 +14,78 @@
 !.yarn/plugins
 !.yarn/releases
 !.yarn/versions
-
-# testing
-/coverage
-
-# next.js
 /.next/
 /out/
-
-# production
 /build
+/coverage
+*.tsbuildinfo
+next-env.d.ts
+.vercel
+__pycache__/
+*.pyc
+/worker/.venv
+.venv/
+venv/
 
-# misc
-.DS_Store
-*.pem
-
-# debug
+# ---------- logs ----------
+logs/
+*.log
 npm-debug.log*
 yarn-debug.log*
 yarn-error.log*
 .pnpm-debug.log*
+*.ndjson
 
-# env files (can opt-in for committing if needed)
-.env*
-
-# vercel
-.vercel
-
-# typescript
-*.tsbuildinfo
-next-env.d.ts
-
-.env
-*.db
-*.db-journal
-!.env.example
-*.db
-*.db-journal
-
-# local media storage (STORAGE_DRIVER=local) and the worker's Python env
+# ---------- user data: media, projects, renders, client material ----------
+# Local storage (uploads, projects in storage/studio/<id>/, renders, caches)
 /storage
-/worker/.venv
-__pycache__/
+/projects/
+/renders/
+/media/
+/style/
+/clients/
+/client-data/
+# setup.ps1 can put the per-user data root inside the checkout when asked; never commit it
+/ReelSmith/
+# any loose media anywhere in the tree (the bundled sample and fonts are the only exceptions)
+*.mp4
+*.mov
+*.m4v
+*.mkv
+*.webm
+*.avi
+*.wav
+*.mp3
+*.m4a
+*.aac
+*.flac
+*.heic
+*.jpg
+*.jpeg
+!/public/sample/sample-output.mp4
+!/public/sample/sample-poster.jpg
+!/public/sample/voice.m4a
 # raw TTS source for the sample narration (voice.m4a is committed)
 /public/sample/voice.wav
+
+# ---------- model weights / downloaded binaries ----------
+/worker/models
+*.onnx
+*.pt
+*.pth
+*.bin
+*.safetensors
+*.ckpt
+*.param
+/workspace/tools/realesrgan/
+
+# ---------- third-party clones (installed by setup.ps1, never vendored) ----------
+/workspace/.claude/skills/video-use/
+/third_party/
+OpenMontage/
+
+# ---------- misc ----------
+.DS_Store
+Thumbs.db
+*.db
+*.db-journal

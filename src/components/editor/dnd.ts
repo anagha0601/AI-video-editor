@@ -6,27 +6,13 @@ import { findClip, timelineDuration } from "@/lib/timeline/derive";
 import { newAudioClip, newTextClip, newVisualClip, TEXT_PRESETS } from "@/lib/timeline/factory";
 import { addClip, updateClip } from "@/lib/timeline/ops";
 import type { AnyClip, TrackKind, VisualClip } from "@/lib/timeline/types";
-import { api } from "@/lib/client/api";
 import { uploadAsset, type AssetDTO } from "@/lib/client/upload";
 import { useEditor } from "./store";
 
 export const DRAG_MIME = "application/x-reelsmith";
 
-export interface StockItemDTO {
-  id: string;
-  type: "video" | "image";
-  url: string;
-  thumb: string;
-  width: number;
-  height: number;
-  duration: number | null;
-  author: string;
-  pageUrl: string;
-}
-
 export type DragPayload =
   | { kind: "asset"; asset: AssetDTO }
-  | { kind: "stock"; item: StockItemDTO; query: string }
   | { kind: "text"; preset: keyof typeof TEXT_PRESETS };
 
 export function dragProps(payload: DragPayload) {
@@ -37,27 +23,6 @@ export function dragProps(payload: DragPayload) {
       e.dataTransfer.effectAllowed = "copy";
     },
   };
-}
-
-/** Register a Pexels result in the user's library (so renders/AI can reference it). */
-export async function stockToAsset(item: StockItemDTO, query: string) {
-  const { asset } = await api<{ asset: AssetDTO }>("/api/media", {
-    method: "POST",
-    json: {
-      source: "pexels",
-      type: item.type,
-      url: item.url,
-      thumbUrl: item.thumb,
-      name: query || item.id,
-      duration: item.duration,
-      width: item.width,
-      height: item.height,
-      hasAudio: false,
-      tags: query.split(/\s+/).filter(Boolean),
-      meta: { author: item.author, pageUrl: item.pageUrl, pexelsId: item.id },
-    },
-  });
-  return asset;
 }
 
 export function clipForAsset(a: AssetDTO, start: number): { clip: AnyClip; kind: TrackKind } {
@@ -108,8 +73,7 @@ export async function addPayload(p: DragPayload, trackId: string | null, time: n
     clip = newTextClip(p.preset, time, s.timeline.aspect);
     kind = "text";
   } else {
-    const asset = p.kind === "asset" ? p.asset : await stockToAsset(p.item, p.query);
-    ({ clip, kind } = clipForAsset(asset, time));
+    ({ clip, kind } = clipForAsset(p.asset, time));
   }
   // Drop onto an incompatible lane -> first track of the right kind.
   const target = trackId ? s.timeline.tracks.find((t) => t.id === trackId) : null;

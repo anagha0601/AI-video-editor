@@ -1,6 +1,10 @@
 import { z } from "zod";
 import { prisma } from "@/server/db";
 import { HttpError, requireUserId, route } from "@/server/http";
+import { createLinkAsset } from "@/server/audiolink";
+import { MODES, startPlan, validateInputs, type ModeInputs } from "@/server/modes";
+
+export const maxDuration = 600; // a pasted sound link is downloaded before the plan starts
 
 export const GET = route(async () => {
   const userId = await requireUserId();
@@ -15,17 +19,48 @@ export const GET = route(async () => {
 const body = z.object({
   title: z.string().trim().max(100).optional(),
   aspect: z.enum(["9:16", "16:9", "1:1"]).default("9:16"),
-  mode: z.enum(["voice", "idea", "script"]).default("voice"),
+  mode: z.enum(["voice", "music", "talking_head", "best_take", "voiceover_broll", "auto_clip"]).default("voice"),
+  // edit modes: role -> asset ids, plus options (see ModeInputs)
+  inputs: z
+    .object({
+      assets: z.record(z.string(), z.array(z.string()).max(60)),
+      script: z.string().max(8000).optional(),
+      musicUrl: z.string().url().max(500).optional(),
+      notes: z.string().max(2000).optional(),
+      faceCutbacks: z.boolean().optional(),
+      count: z.number().int().min(1).max(10).optional(),
+      minSec: z.number().min(5).max(180).optional(),
+      maxSec: z.number().min(5).max(180).optional(),
+      grade: z.object({ look: z.enum(["cinematic_warm"]), intensity: z.number().min(0).max(1) }).optional(),
+    })
+    .optional(),
   prompt: z.string().trim().max(6000).optional(),
   visualMode: z.enum(["auto", "ai", "stock"]).default("auto"),
   assetIds: z.array(z.string()).max(100).default([]),
-  usageIds: z.array(z.string()).max(50).default([]), // script-writing calls made before the project existed
 });
 
 export const POST = route(async (req: Request) => {
   const userId = await requireUserId();
   const parsed = body.safeParse(await req.json().catch(() => ({})));
   if (!parsed.success) throw new HttpError(400, "Invalid project");
+  const { mode, inputs } = parsed.data;
+  if (mode !== "voice") {
+    if (!inputs) throw new HttpError(400, "Add the inputs for this mode");
+    validateInputs(mode, inputs as ModeInputs);
+    // a pasted sound link (Instagram /reel/, YouTube, Shorts, .mp3) becomes the music input, like the editor's Paste link
+    if (inputs.musicUrl && MODES[mode].roles.music && !(inputs.assets.music ?? []).length) {
+      const asset = await createLinkAsset(userId, inputs.musicUrl);
+      inputs.assets.music = [asset.id];
+    }
+    const ids = [...new Set(Object.values(inputs.assets).flat())];
+    const owned = await prisma.mediaAsset.count({ where: { id: { in: ids }, userId } });
+    if (owned !== ids.length) throw new HttpError(400, "Some inputs are not in your library");
+    const project = await prisma.project.create({
+      data: { userId, title: parsed.data.title || "Untitled video", aspect: parsed.data.aspect, mode, inputs, assetIds: ids, status: "planning" },
+    });
+    await startPlan(project);
+    return { project: { id: project.id } };
+  }
   const project = await prisma.project.create({
     data: {
       userId,
@@ -39,8 +74,5 @@ export const POST = route(async (req: Request) => {
     },
     select: { id: true },
   });
-  if (parsed.data.usageIds.length) {
-    await prisma.apiUsage.updateMany({ where: { id: { in: parsed.data.usageIds }, userId, projectId: null }, data: { projectId: project.id } });
-  }
   return { project };
 });

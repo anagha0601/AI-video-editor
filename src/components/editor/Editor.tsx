@@ -2,7 +2,7 @@
 
 import { useEffect, useState } from "react";
 import Link from "next/link";
-import { ArrowLeft, Captions, Check, CloudOff, FolderOpen, Loader2, Redo2, SlidersHorizontal, Sparkles, Type, Undo2, Waves } from "lucide-react";
+import { ArrowLeft, Captions, Check, CloudOff, FolderOpen, ImageIcon, Loader2, Redo2, SlidersHorizontal, Sparkles, Type, Undo2, Waves, Wand2 } from "lucide-react";
 import { toast } from "sonner";
 import type { Timeline as TL } from "@/lib/timeline/types";
 import { api } from "@/lib/client/api";
@@ -23,6 +23,9 @@ import { TextPanel } from "./panels/TextPanel";
 import { CaptionsPanel } from "./panels/CaptionsPanel";
 import { AudioPanel } from "./panels/AudioPanel";
 import { AiPanel } from "./panels/AiPanel";
+import { EnhancePanel } from "./panels/EnhancePanel";
+import { BackgroundPanel } from "./panels/BackgroundPanel";
+import { AgentPanel } from "@/components/agent/AgentPanel";
 import { VersionsDialog } from "./VersionsDialog";
 import { ExportDialog } from "./ExportDialog";
 
@@ -31,6 +34,8 @@ const PANELS = [
   { id: "text", label: "Text", icon: Type },
   { id: "captions", label: "Captions", icon: Captions },
   { id: "audio", label: "Audio", icon: Waves },
+  { id: "enhance", label: "Enhance", icon: Wand2 },
+  { id: "background", label: "Backdrop", icon: ImageIcon },
   { id: "ai", label: "AI edit", icon: Sparkles },
   { id: "inspect", label: "Edit", icon: SlidersHorizontal, narrowOnly: true },
 ] as const;
@@ -95,6 +100,8 @@ function EditorInner() {
           {panel === "text" && <TextPanel />}
           {panel === "captions" && <CaptionsPanel />}
           {panel === "audio" && <AudioPanel />}
+          {panel === "enhance" && <EnhancePanel />}
+          {panel === "background" && <BackgroundPanel />}
           {panel === "ai" && <AiPanel />}
           {panel === "inspect" && <Inspector />}
         </aside>
@@ -194,6 +201,7 @@ function TopBar() {
           </TooltipTrigger>
           <TooltipContent className="max-w-64">Opens gemini.google.com beside the editor. Copy a scene prompt, generate there, then Ctrl+V the image onto the selected scene.</TooltipContent>
         </Tooltip>
+        {projectId && <AgentPanel projectId={projectId} />}
         <VersionsDialog />
         <ExportDialog />
       </div>

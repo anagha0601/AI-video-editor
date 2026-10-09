@@ -2,6 +2,7 @@ import Link from "next/link";
 import { LogOut, Plus } from "lucide-react";
 import { signOut } from "@/auth";
 import { Button } from "@/components/ui/button";
+import { GeminiNav } from "./GeminiNav";
 import { Logo } from "./Logo";
 
 export function AppHeader({ email }: { email?: string | null }) {
@@ -16,9 +17,10 @@ export function AppHeader({ email }: { email?: string | null }) {
           <Link href="/media" className="rounded-md px-2 py-1.5 text-muted-foreground hover:bg-muted hover:text-foreground sm:px-2.5">
             Media
           </Link>
-          <Link href="/usage" className="rounded-md px-2 py-1.5 text-muted-foreground hover:bg-muted hover:text-foreground sm:px-2.5">
-            Usage
+          <Link href="/jobs" className="rounded-md px-2 py-1.5 text-muted-foreground hover:bg-muted hover:text-foreground sm:px-2.5">
+            Jobs
           </Link>
+          <GeminiNav />
         </nav>
         <div className="ml-auto flex items-center gap-2">
           <Button size="sm" asChild className="hidden sm:inline-flex">

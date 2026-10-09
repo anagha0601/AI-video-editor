@@ -3,5 +3,11 @@ psycopg[binary]>=3.2
 boto3>=1.35
 requests>=2.32
 numpy>=1.26
+# background matte (worker/matte.py, RobustVideoMatting ONNX model in worker/models/)
+onnxruntime>=1.18
+# "Music from a link" and Claude's music downloads (run as python -m yt_dlp)
+yt-dlp>=2025.1.1
+# edit-reel's beat plots / contact sheets
+matplotlib>=3.8
 # Static ffmpeg for running the worker outside Docker (Windows/macOS); the Docker image uses apt ffmpeg.
 imageio-ffmpeg>=0.5

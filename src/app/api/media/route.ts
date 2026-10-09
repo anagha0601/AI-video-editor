@@ -3,7 +3,7 @@ import { z } from "zod";
 import { prisma } from "@/server/db";
 import { HttpError, requireUserId, route } from "@/server/http";
 import { keyFromUrl } from "@/server/storage";
-import { autoTags, nameTags } from "@/server/tagging";
+import { nameTags } from "@/server/tagging";
 
 export const maxDuration = 30;
 
@@ -19,7 +19,7 @@ export const GET = route(async (req: Request) => {
 });
 
 const body = z.object({
-  source: z.enum(["upload", "pexels", "gemini_manual"]).default("upload"),
+  source: z.enum(["upload", "gemini_manual"]).default("upload"),
   type: z.enum(["video", "image", "music", "audio"]),
   url: z.string().min(1).max(2000),
   thumbUrl: z.string().max(2000).nullish(),
@@ -33,27 +33,19 @@ const body = z.object({
   meta: z.record(z.string(), z.unknown()).optional(),
 });
 
-/** Register an uploaded file (or a Pexels pick) in the library. Uploads get AI tags. */
+/** Register an uploaded file in the library. Uploads are tagged from their file name. */
 export const POST = route(async (req: Request) => {
   const userId = await requireUserId();
   const parsed = body.safeParse(await req.json().catch(() => null));
   if (!parsed.success) throw new HttpError(400, "Invalid media");
   const d = parsed.data;
-  let key: string | null = null;
-  if (d.source !== "pexels") {
-    key = keyFromUrl(d.url);
-    if (!key || !key.startsWith(`u/${userId}/`)) throw new HttpError(400, "Upload the file first");
-  } else {
-    if (!/^https:\/\/([a-z0-9-]+\.)*pexels\.com\//.test(d.url)) throw new HttpError(400, "Not a Pexels URL");
-    const existing = await prisma.mediaAsset.findFirst({ where: { userId, url: d.url } });
-    if (existing) return { asset: existing };
-  }
+  const key = keyFromUrl(d.url);
+  if (!key || !key.startsWith(`u/${userId}/`)) throw new HttpError(400, "Upload the file first");
   let tags = d.tags ?? [];
   if (d.source === "gemini_manual") tags = ["gemini", ...tags];
   if (d.source === "upload") {
     tags = [...nameTags(d.name)];
     if (d.type === "music") tags.push("music");
-    if (d.type === "video" || d.type === "image") tags.push(...(await autoTags(d.thumbUrl ?? (d.type === "image" ? d.url : null), userId)));
   }
   const asset = await prisma.mediaAsset.create({
     data: {

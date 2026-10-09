@@ -1,17 +1,13 @@
 "use client";
 
-import { useState } from "react";
 import { X } from "lucide-react";
 import { toast } from "sonner";
 import { findClip } from "@/lib/timeline/derive";
 import type { AssetDTO } from "@/lib/client/upload";
 import { MediaLibrary } from "@/components/media/MediaLibrary";
-import { StockSearch } from "@/components/media/StockSearch";
 import { Button } from "@/components/ui/button";
-import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { useEditor } from "../store";
-import { addPayload, dragProps, replaceClipMedia, stockToAsset } from "../dnd";
-import { AiImagePanel } from "./AiImagePanel";
+import { addPayload, dragProps, replaceClipMedia } from "../dnd";
 
 function replaceWith(asset: AssetDTO) {
   const s = useEditor.getState();
@@ -23,10 +19,8 @@ function replaceWith(asset: AssetDTO) {
 
 export function MediaPanel() {
   const assetsMap = useEditor((s) => s.assets);
-  const aspect = useEditor((s) => s.timeline.aspect);
   const replaceTarget = useEditor((s) => s.replaceTarget);
   const targetName = useEditor((s) => (s.replaceTarget ? findClip(s.timeline, s.replaceTarget)?.clip : null));
-  const [tab, setTab] = useState("library");
   const assets = Object.values(assetsMap).sort((a, b) => b.createdAt.localeCompare(a.createdAt));
   const setAssets = (fn: (a: AssetDTO[] | null) => AssetDTO[] | null) => useEditor.getState().setAssets(fn(assets) ?? []);
   // Uploads made inside the editor go straight onto the timeline (or into the clip being replaced).
@@ -53,51 +47,19 @@ export function MediaPanel() {
           </Button>
         </div>
       )}
-      <Tabs value={tab} onValueChange={setTab} className="flex min-h-0 flex-1 flex-col gap-0 p-3">
-        <TabsList className="w-full">
-          <TabsTrigger value="library">My media</TabsTrigger>
-          <TabsTrigger value="stock">Stock</TabsTrigger>
-          <TabsTrigger value="ai">AI image</TabsTrigger>
-        </TabsList>
-        <TabsContent value="ai" className="min-h-0 flex-1 overflow-y-auto pt-3">
-          <AiImagePanel onPick={(a) => (replaceTarget ? replaceWith(a) : add(a))} replacing={Boolean(replaceTarget)} />
-        </TabsContent>
-        <TabsContent value="library" className="min-h-0 flex-1 overflow-y-auto pt-3">
-          <MediaLibrary
-            compact
-            assets={assets}
-            setAssets={setAssets}
-            onAdd={replaceTarget ? undefined : add}
-            highlight={replaceTarget ?? undefined}
-            onUploaded={onUploaded}
-            itemProps={(a) =>
-              replaceTarget ? { onClick: () => replaceWith(a) } : a.type === "audio" && a.source === "sample" ? {} : dragProps({ kind: "asset", asset: a })
-            }
-          />
-        </TabsContent>
-        <TabsContent value="stock" className="min-h-0 flex-1 overflow-y-auto pt-3">
-          <StockSearch
-            aspect={aspect}
-            highlight={Boolean(replaceTarget)}
-            onAdd={replaceTarget ? undefined : (item, query) => addPayload({ kind: "stock", item, query }, null, useEditor.getState().playhead).catch((e) => toast.error(e.message))}
-            itemProps={(item, query) =>
-              replaceTarget
-                ? {
-                    onClick: async () => {
-                      try {
-                        const asset = await stockToAsset(item, query);
-                        useEditor.getState().setAssets([asset, ...assets]);
-                        replaceWith(asset);
-                      } catch (e) {
-                        toast.error((e as Error).message);
-                      }
-                    },
-                  }
-                : dragProps({ kind: "stock", item, query })
-            }
-          />
-        </TabsContent>
-      </Tabs>
+      <div className="min-h-0 flex-1 overflow-y-auto p-3">
+        <MediaLibrary
+          compact
+          assets={assets}
+          setAssets={setAssets}
+          onAdd={replaceTarget ? undefined : add}
+          highlight={replaceTarget ?? undefined}
+          onUploaded={onUploaded}
+          itemProps={(a) =>
+            replaceTarget ? { onClick: () => replaceWith(a) } : a.type === "audio" && a.source === "sample" ? {} : dragProps({ kind: "asset", asset: a })
+          }
+        />
+      </div>
     </div>
   );
 }

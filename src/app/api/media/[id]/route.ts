@@ -6,6 +6,7 @@ import { deleteObject, keyFromUrl } from "@/server/storage";
 const patch = z.object({
   name: z.string().trim().min(1).max(120).optional(),
   tags: z.array(z.string().trim().toLowerCase().min(1).max(40)).max(30).optional(),
+  rights: z.boolean().optional(), // link-sourced audio: "I have the rights" (otherwise timing only / personal use)
 });
 
 export const PATCH = route(async (req: Request, ctx: Ctx<{ id: string }>) => {
@@ -13,8 +14,11 @@ export const PATCH = route(async (req: Request, ctx: Ctx<{ id: string }>) => {
   const { id } = await ctx.params;
   const parsed = patch.safeParse(await req.json().catch(() => null));
   if (!parsed.success) throw new HttpError(400, "Invalid update");
-  const res = await prisma.mediaAsset.updateMany({ where: { id, userId }, data: parsed.data });
-  if (!res.count) throw new HttpError(404, "Not found");
+  const { rights, ...data } = parsed.data;
+  const current = await prisma.mediaAsset.findFirst({ where: { id, userId } });
+  if (!current) throw new HttpError(404, "Not found");
+  const meta = rights === undefined ? undefined : { ...((current.meta ?? {}) as Record<string, unknown>), rights };
+  await prisma.mediaAsset.update({ where: { id }, data: { ...data, ...(meta ? { meta } : {}) } });
   return { asset: await prisma.mediaAsset.findUnique({ where: { id } }) };
 });
 

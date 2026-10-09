@@ -3,14 +3,17 @@ import { z } from "zod";
 import { timelineDuration } from "@/lib/timeline/derive";
 import { prisma } from "@/server/db";
 import { HttpError, ownedProject, requireUserId, route, type Ctx } from "@/server/http";
+import { settleMattes } from "@/server/matte";
 import { assertTimeline } from "@/server/validate";
+import type { Timeline } from "@/lib/timeline/types";
 
 export const GET = route(async (_req: Request, ctx: Ctx<{ id: string }>) => {
   const userId = await requireUserId();
   const { id } = await ctx.params;
   await ownedProject(id, userId);
-  const tl = await prisma.timeline.findUnique({ where: { projectId: id } });
+  let tl = await prisma.timeline.findUnique({ where: { projectId: id } });
   if (!tl) throw new HttpError(404, "No timeline yet");
+  if ((await settleMattes(id, tl.json as unknown as Timeline)).changed) tl = (await prisma.timeline.findUnique({ where: { projectId: id } }))!;
   return { json: tl.json, revision: tl.revision, updatedAt: tl.updatedAt };
 });
 

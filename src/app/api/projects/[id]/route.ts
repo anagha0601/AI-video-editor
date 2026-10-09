@@ -8,7 +8,7 @@ export const maxDuration = 300;
 
 /**
  * Status for the processing screen. When the worker has finished transcribing,
- * the first request to see it builds the first cut (Gemini + visual matching).
+ * the first request to see it builds the first cut (scene split + library matching).
  */
 export const GET = route(async (_req: Request, ctx: Ctx<{ id: string }>) => {
   const userId = await requireUserId();

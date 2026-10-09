@@ -1,6 +1,6 @@
 // Canvas compositor for the preview. Mirrors worker/render.py + worker/ass.py:
 // same placement math, color matrix, Ken Burns window, transitions (xfade
-// fade/slideleft/zoomin), text layout (line height = (asc+desc)*px) and captions.
+// fade/slideleft/zoomin/fadewhite), beat effects, text layout (line height = (asc+desc)*px) and captions.
 import {
   activeWordIndex,
   adjacentPrev,
@@ -9,7 +9,16 @@ import {
   clamp,
   clipEnd,
   colorOps,
+  enhanceCurve,
+  enhanceTable,
   fadeGain,
+  fadeWhiteWeights,
+  fxAt,
+  gradeSaturation,
+  gradeTable,
+  gradeVignetteAt,
+  GRADE_VIGNETTE,
+  hasGrade,
   kenBurnsAt,
   placement,
   smoothstep,
@@ -18,22 +27,55 @@ import {
   type WordState,
 } from "@/lib/timeline/derive";
 import { FONTS, cssFont } from "@/lib/timeline/fonts";
-import type { Filters, TextClip, Timeline, VideoTrack, VisualClip } from "@/lib/timeline/types";
+import type { Enhance, Filters, Grade, TextClip, Timeline, VideoTrack, VisualClip } from "@/lib/timeline/types";
 
 export interface FrameSource {
   /** Drawable for a visual clip, or null while loading. */
   source(clip: VisualClip): { el: CanvasImageSource; w: number; h: number } | null;
+  /** The clip's person matte (white = keep), synced with source(); null when off or loading. */
+  matte?(clip: VisualClip): { el: CanvasImageSource; w: number; h: number } | null;
+}
+
+// Background swap: the clip is drawn on its own layer, then masked by the matte's luminance (render: alphamerge).
+let layer: HTMLCanvasElement | null = null;
+function matteLayer(W: number, H: number) {
+  if (!layer) layer = document.createElement("canvas");
+  if (layer.width !== W || layer.height !== H) [layer.width, layer.height] = [W, H];
+  const c = layer.getContext("2d")!;
+  c.setTransform(1, 0, 0, 1, 0, 0);
+  c.globalCompositeOperation = "source-over";
+  c.clearRect(0, 0, W, H);
+  return { canvas: layer, c };
+}
+function lumaToAlpha() {
+  if (!document.getElementById("rs-luma-alpha")) {
+    const svg = document.createElementNS("http://www.w3.org/2000/svg", "svg");
+    svg.setAttribute("width", "0");
+    svg.setAttribute("height", "0");
+    svg.style.position = "absolute";
+    svg.innerHTML = `<filter id="rs-luma-alpha" color-interpolation-filters="sRGB"><feColorMatrix type="luminanceToAlpha"/></filter>`;
+    document.body.appendChild(svg);
+  }
+  return "url(#rs-luma-alpha)";
 }
 
 // ---------------------------------------------------------------- color filters
 
 const filterIds = new Map<string, string>();
 
-/** An SVG filter (feComponentTransfer + feColorMatrix) matching lutrgb + colorchannelmixer. */
-function filterUrl(f: Filters): string | null {
+/**
+ * An SVG filter matching the render: the Enhance color/match curve (lutrgb, as a table) first, then the
+ * clip's filters (feComponentTransfer + feColorMatrix = lutrgb + colorchannelmixer). Stabilise, denoise,
+ * sharpen and upscale are only shown in the Enhance panel's before/after preview.
+ */
+function filterUrl(f: Filters, enh?: Enhance | null, grade?: Grade | null): string | null {
   const ops = colorOps(f);
-  if (ops.identity) return null;
-  const key = `${ops.slope.toFixed(4)}|${ops.intercept.toFixed(4)}|${ops.matrix.map((v) => v.toFixed(4)).join(",")}`;
+  const cv = enhanceCurve(enh);
+  const gr = hasGrade(grade) ? grade : null;
+  if (ops.identity && !cv && !gr) return null;
+  const tables = cv ? ([0, 1, 2] as const).map((c) => enhanceTable(cv, c).join(" ")) : null;
+  const gTables = gr ? ([0, 1, 2] as const).map((c) => gradeTable(gr, c).join(" ")) : null;
+  const key = `${ops.slope.toFixed(4)}|${ops.intercept.toFixed(4)}|${ops.matrix.map((v) => v.toFixed(4)).join(",")}|${tables?.join("/") ?? ""}|${gTables?.join("/") ?? ""}`;
   let id = filterIds.get(key);
   if (!id) {
     id = `rsfx${filterIds.size}`;
@@ -49,10 +91,19 @@ function filterUrl(f: Filters): string | null {
     }
     const m = ops.matrix;
     const fn = (ch: string) => `<feFunc${ch} type="linear" slope="${ops.slope}" intercept="${ops.intercept}"/>`;
+    const enhanceStage = tables
+      ? `<feComponentTransfer>${(["R", "G", "B"] as const).map((ch, i) => `<feFunc${ch} type="table" tableValues="${tables[i]}"/>`).join("")}</feComponentTransfer>`
+      : "";
+    // the look (worker/grade.py) comes last, after Enhance and the clip's filters, like the render
+    const gradeStage =
+      gr && gTables
+        ? `<feComponentTransfer>${(["R", "G", "B"] as const).map((ch, i) => `<feFunc${ch} type="table" tableValues="${gTables[i]}"/>`).join("")}</feComponentTransfer>` +
+          `<feColorMatrix type="saturate" values="${gradeSaturation(gr).toFixed(4)}"/>`
+        : "";
     svg.insertAdjacentHTML(
       "beforeend",
-      `<filter id="${id}" color-interpolation-filters="sRGB"><feComponentTransfer>${fn("R")}${fn("G")}${fn("B")}</feComponentTransfer>` +
-        `<feColorMatrix type="matrix" values="${m[0]} ${m[1]} ${m[2]} 0 0 ${m[3]} ${m[4]} ${m[5]} 0 0 ${m[6]} ${m[7]} ${m[8]} 0 0 0 0 0 1 0"/></filter>`,
+      `<filter id="${id}" color-interpolation-filters="sRGB">${enhanceStage}<feComponentTransfer>${fn("R")}${fn("G")}${fn("B")}</feComponentTransfer>` +
+        `<feColorMatrix type="matrix" values="${m[0]} ${m[1]} ${m[2]} 0 0 ${m[3]} ${m[4]} ${m[5]} 0 0 ${m[6]} ${m[7]} ${m[8]} 0 0 0 0 0 1 0"/>${gradeStage}</filter>`,
     );
   }
   return `url(#${id})`;
@@ -68,6 +119,7 @@ function drawVisual(ctx: CanvasRenderingContext2D, tl: Timeline, clip: VisualCli
   ctx.rect(0, 0, W, H);
   ctx.clip();
   ctx.globalAlpha *= fadeGain(clip, clamp(t, clip.start, clipEnd(clip) - 1e-3));
+  const frame = ctx.getTransform(); // the vignette stays fixed to the frame (render: after zoompan)
   if (clip.type === "image" && clip.kenBurns) {
     const p = clamp((t - clip.start) / Math.max(clip.duration, 1e-3), 0, 1);
     const { z, fx, fy } = kenBurnsAt(clip.kenBurns, p);
@@ -90,12 +142,45 @@ function drawVisual(ctx: CanvasRenderingContext2D, tl: Timeline, clip: VisualCli
     const s = src.source(clip);
     if (s && s.w && s.h) {
       const p = placement(s.w, s.h, W, H, clip.transform);
-      const f = filterUrl(clip.filters);
-      if (f) ctx.filter = f;
-      ctx.drawImage(s.el, p.x, p.y, p.w, p.h);
-      ctx.filter = "none";
+      const f = filterUrl(clip.filters, clip.enhance, clip.grade);
+      const m = clip.type === "video" ? (src.matte?.(clip) ?? null) : null;
+      if (m && m.w && m.h) {
+        // the look's vignette darkens the clip only (render: on the clip's colour, alpha untouched)
+        const { canvas, c } = matteLayer(W, H);
+        if (f) c.filter = f;
+        c.drawImage(s.el, p.x, p.y, p.w, p.h);
+        c.filter = "none";
+        if (hasGrade(clip.grade)) drawVignette(c, new DOMMatrix(), W, H, clip.grade);
+        c.globalCompositeOperation = "destination-in";
+        c.filter = lumaToAlpha();
+        c.drawImage(m.el, p.x, p.y, p.w, p.h);
+        c.filter = "none";
+        ctx.drawImage(canvas, 0, 0);
+      } else {
+        if (f) ctx.filter = f;
+        ctx.drawImage(s.el, p.x, p.y, p.w, p.h);
+        ctx.filter = "none";
+        if (hasGrade(clip.grade)) drawVignette(ctx, frame, W, H, clip.grade);
+      }
     }
   }
+  ctx.restore();
+}
+
+/** The look's vignette: elliptical like worker/grade.py (r = hypot(dx/(W/2), dy/(H/2)) / sqrt 2). */
+function drawVignette(ctx: CanvasRenderingContext2D, frame: DOMMatrix, W: number, H: number, g: Grade) {
+  ctx.save();
+  ctx.setTransform(frame);
+  ctx.translate(W / 2, H / 2);
+  ctx.scale(W / 2, H / 2);
+  const R = Math.SQRT2 * GRADE_VIGNETTE.r1;
+  const grad = ctx.createRadialGradient(0, 0, 0, 0, 0, R);
+  for (let i = 0; i <= 12; i++) {
+    const r = (i / 12) * GRADE_VIGNETTE.r1;
+    grad.addColorStop(i / 12, `rgba(0,0,0,${gradeVignetteAt(g, r).toFixed(4)})`);
+  }
+  ctx.fillStyle = grad;
+  ctx.fillRect(-1, -1, 2, 2);
   ctx.restore();
 }
 
@@ -116,6 +201,21 @@ function drawVideoTrack(ctx: CanvasRenderingContext2D, tl: Timeline, track: Vide
     ctx.save();
     ctx.globalAlpha *= p;
     drawVisual(ctx, tl, clip, t, src);
+    ctx.restore();
+  } else if (tr.type === "flash") {
+    // xfade fadewhite: wA * prev + wB * clip + wW * white
+    const { wA, wB, wW } = fadeWhiteWeights(p);
+    drawVisual(ctx, tl, clip, t, src);
+    if (wA + wB > 1e-4) {
+      ctx.save();
+      ctx.globalAlpha *= wA / (wA + wB);
+      drawVisual(ctx, tl, prev, held, src);
+      ctx.restore();
+    }
+    ctx.save();
+    ctx.globalAlpha *= wW;
+    ctx.fillStyle = "#fff";
+    ctx.fillRect(0, 0, W, H);
     ctx.restore();
   } else if (tr.type === "slide") {
     ctx.save();
@@ -272,9 +372,27 @@ export function drawFrame(ctx: CanvasRenderingContext2D, tl: Timeline, t: number
   ctx.fillRect(0, 0, tl.width, tl.height);
   const tracks = tl.tracks.filter((tr) => !tr.hidden);
   // Video tracks bottom-up, then text/captions bottom-up (text is burned in last in the render).
+  // Beat effects move the composited picture (render: perspective after the overlays), text stays put.
+  const fx = fxAt(tl.fx, t);
+  ctx.save();
+  if (fx.z > 1 + 1e-4) {
+    const W = tl.width;
+    const H = tl.height;
+    ctx.scale(fx.z, fx.z);
+    ctx.translate(-((1 - 1 / fx.z) / 2 + fx.dx) * W, -((1 - 1 / fx.z) / 2 + fx.dy) * H);
+  }
   for (let i = tracks.length - 1; i >= 0; i--) {
     const tr = tracks[i];
     if (tr.kind === "video") drawVideoTrack(ctx, tl, tr, t, src);
+  }
+  ctx.restore();
+  if (fx.flash > 1e-3) {
+    // render: eq brightness (adds to luma)
+    ctx.save();
+    ctx.globalCompositeOperation = "lighter";
+    ctx.fillStyle = `rgba(255,255,255,${fx.flash.toFixed(4)})`;
+    ctx.fillRect(0, 0, tl.width, tl.height);
+    ctx.restore();
   }
   for (let i = tracks.length - 1; i >= 0; i--) {
     const tr = tracks[i];

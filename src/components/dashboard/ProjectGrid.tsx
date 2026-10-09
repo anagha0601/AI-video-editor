@@ -33,6 +33,9 @@ const STATUS: Record<string, { label: string; cls: string }> = {
   ready: { label: "Ready to edit", cls: "bg-emerald-500/20 text-emerald-200" },
   rendered: { label: "Exported", cls: "bg-violet-500/25 text-violet-200" },
   failed: { label: "Failed", cls: "bg-red-500/20 text-red-200" },
+  planning: { label: "Claude is planning", cls: "bg-sky-500/20 text-sky-200" },
+  review: { label: "Plan ready to review", cls: "bg-amber-500/20 text-amber-200" },
+  plan_failed: { label: "Planning failed", cls: "bg-red-500/20 text-red-200" },
 };
 
 const FILTERS = [
@@ -43,7 +46,8 @@ const FILTERS = [
   { id: "failed", label: "Failed" },
 ];
 
-const group = (s: string) => (["draft", "transcribing", "transcribed", "building"].includes(s) ? "processing" : s);
+const group = (s: string) =>
+  ["draft", "transcribing", "transcribed", "building", "planning", "review"].includes(s) ? "processing" : s === "plan_failed" ? "failed" : s;
 
 export function ProjectGrid({ initial }: { initial: ProjectCard[] }) {
   const [projects, setProjects] = useState(initial);

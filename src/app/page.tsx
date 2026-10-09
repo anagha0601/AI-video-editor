@@ -6,7 +6,7 @@ import { Button } from "@/components/ui/button";
 
 const STEPS = [
   { icon: Mic, title: "Record", body: "Upload a voiceover or record it right in the browser. Your voice sets the pace." },
-  { icon: Wand2, title: "Auto-edit", body: "Whisper transcribes every word with timings; Gemini splits scenes and picks visuals — your clips first, stock second." },
+  { icon: Wand2, title: "Auto-edit", body: "Whisper transcribes every word with timings, then scenes are split and matched to your own clips and photos." },
   { icon: SlidersHorizontal, title: "Fine-tune", body: "A real multi-track timeline: trim, split, transitions, text, captions, music ducking — or just tell the AI what to change." },
   { icon: Download, title: "Download", body: "Render a captioned MP4 in 720p or 1080p that matches the preview. Re-render as often as you like." },
 ];
@@ -22,11 +22,11 @@ const FEATURES = [
 
 const FAQ = [
   { q: "Do I need editing skills?", a: "No. You get a finished first cut automatically. The editor is there when you want control, and the AI command box handles most tweaks in plain English." },
-  { q: "Can I use my own footage?", a: "Yes — upload videos and photos to your library. They're tagged automatically and preferred over stock when matching scenes." },
+  { q: "Can I use my own footage?", a: "Yes — it's built for it. Upload videos and photos to your library; descriptive file names decide which scene each one matches." },
   { q: "Are there watermarks or limits?", a: "No watermark, no usage caps, unlimited edits and re-renders." },
   { q: "Will the export look like the preview?", a: "Yes. The preview and the renderer read the same timeline JSON with the same fonts, color math, transitions and caption layout." },
   { q: "What languages work?", a: "Transcription auto-detects the language (Whisper), so captions work for most major languages." },
-  { q: "Who owns the videos?", a: "You do. Stock clips come from Pexels under its free license." },
+  { q: "Who owns the videos?", a: "You do. Everything runs on your own machine with your own media." },
 ];
 
 export default async function Landing() {
@@ -161,7 +161,7 @@ export default async function Landing() {
         </div>
       </section>
 
-      <footer className="border-t py-8 text-center text-xs text-muted-foreground">© {new Date().getFullYear()} ReelSmith · Stock media by Pexels</footer>
+      <footer className="border-t py-8 text-center text-xs text-muted-foreground">© {new Date().getFullYear()} ReelSmith</footer>
     </div>
   );
 }

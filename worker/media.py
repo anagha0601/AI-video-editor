@@ -26,6 +26,18 @@ def ffmpeg_bin() -> str:
         raise RuntimeError("ffmpeg not found: install it or set FFMPEG_BIN") from exc
 
 
+@lru_cache(maxsize=1)
+def ffmpeg_major() -> int:
+    out = subprocess.run([ffmpeg_bin(), "-hide_banner", "-version"], capture_output=True, text=True).stdout
+    m = re.search(r"ffmpeg version n?(\d+)", out)
+    return int(m.group(1)) if m else 0
+
+
+def filter_script_args(path: str) -> list[str]:
+    """Read -filter_complex from a file: ffmpeg 7+ uses -/filter_complex (8+ removed -filter_complex_script)."""
+    return ["-/filter_complex", path] if ffmpeg_major() >= 7 else ["-filter_complex_script", path]
+
+
 def probe(path: str) -> dict:
     """Duration, audio presence and video size, parsed from `ffmpeg -i` (no ffprobe needed)."""
     proc = subprocess.run([ffmpeg_bin(), "-hide_banner", "-i", path], capture_output=True, text=True,

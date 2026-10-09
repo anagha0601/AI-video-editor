@@ -1,16 +1,14 @@
 "use client";
 
-import { useMemo, useState } from "react";
-import { ClipboardCopy, Film, ImageIcon, Loader2, Music, Palette, Plus, RefreshCw, RotateCcw, Sparkles, Trash2, Type, X } from "lucide-react";
+import { useMemo } from "react";
+import { ClipboardCopy, ExternalLink, Film, ImageIcon, Music, Palette, Plus, RefreshCw, RotateCcw, Trash2, Type, X } from "lucide-react";
 import { toast } from "sonner";
-import { replaceClipMedia } from "../dnd";
 import { copyScenePrompt } from "../quickimport";
-import { generateImage } from "./AiImagePanel";
-import { adjacentPrev, clipEnd, findClip, keyframeGain, mappedWords } from "@/lib/timeline/derive";
-import { DEFAULT_FILTERS, DEFAULT_TRANSFORM } from "@/lib/timeline/factory";
+import { adjacentPrev, clipEnd, findClip, GRADE_LOOKS, keyframeGain } from "@/lib/timeline/derive";
+import { DEFAULT_FILTERS, DEFAULT_GRADE_INTENSITY, DEFAULT_TRANSFORM } from "@/lib/timeline/factory";
 import { FONTS, FONT_IDS } from "@/lib/timeline/fonts";
 import { deleteClips, moveClip, trimClip, updateClip } from "@/lib/timeline/ops";
-import type { AudioClip, FilterPreset, FontId, KenBurnsDirection, TextAnimIn, TextAnimOut, TextClip, TransitionType, VisualClip, VideoTrack } from "@/lib/timeline/types";
+import type { AudioClip, FilterPreset, FontId, GradeLook, KenBurnsDirection, TextAnimIn, TextAnimOut, TextClip, TransitionType, VisualClip, VideoTrack } from "@/lib/timeline/types";
 import { Button } from "@/components/ui/button";
 import { Label } from "@/components/ui/label";
 import { Switch } from "@/components/ui/switch";
@@ -107,6 +105,39 @@ function AudioControls({ clip }: { clip: VisualClip | AudioClip }) {
   );
 }
 
+/** Cinematic look (worker/grade.py): per clip, with "apply to all" for a consistent look across the edit. */
+function GradeSection({ clip }: { clip: VisualClip }) {
+  const e = useClipEdit(clip.id);
+  const g = clip.grade;
+  const applyAll = () => {
+    const s = useEditor.getState();
+    let tl = s.timeline;
+    for (const t of tl.tracks) {
+      if (t.kind !== "video") continue;
+      for (const c of t.clips) if (c.type !== "color") tl = updateClip(tl, c.id, { grade: g ? { ...g } : null });
+    }
+    s.commit(tl, g ? `${GRADE_LOOKS[g.look].label} on all clips` : "Look off on all clips");
+  };
+  return (
+    <Section title="Look">
+      <Segmented<"none" | GradeLook>
+        value={g?.look ?? "none"}
+        options={[{ value: "none", label: "None" }, ...Object.entries(GRADE_LOOKS).map(([id, l]) => ({ value: id as GradeLook, label: l.label }))]}
+        onChange={(v) => e.set({ grade: v === "none" ? null : { look: v, intensity: g?.intensity ?? DEFAULT_GRADE_INTENSITY } }, "Look")}
+      />
+      {g && (
+        <>
+          <SliderField label="Intensity" value={g.intensity} min={0} max={1} step={0.05} format={(v) => `${Math.round(v * 100)}%`} onLive={(v) => e.live({ grade: { ...g, intensity: v } })} onDone={() => e.done("Look intensity")} />
+          <p className="text-[11px] text-muted-foreground">Warm highlights, teal shadows, soft blacks, calmer background colours and a light vignette. Skin tones are protected in the export (the preview approximates that).</p>
+        </>
+      )}
+      <Button variant="secondary" size="sm" className="w-full" onClick={applyAll}>
+        Apply {g ? `${GRADE_LOOKS[g.look].label} ${Math.round(g.intensity * 100)}%` : "no look"} to all clips
+      </Button>
+    </Section>
+  );
+}
+
 function VisualInspector({ clip, track }: { clip: VisualClip; track: VideoTrack }) {
   const e = useClipEdit(clip.id);
   const prev = adjacentPrev(track.clips, clip);
@@ -121,9 +152,8 @@ function VisualInspector({ clip, track }: { clip: VisualClip; track: VideoTrack 
         <Button variant="secondary" size="sm" onClick={() => setReplace(clip.id)}>
           <RefreshCw /> Replace
         </Button>
-        <GenerateForClip clip={clip} />
-        <Button variant="secondary" size="sm" className="col-span-2" onClick={() => copyScenePrompt(clip)} title="Copy a ready-to-paste image prompt for Gemini">
-          <ClipboardCopy /> Copy prompt for Gemini
+        <Button variant="secondary" size="sm" onClick={() => copyScenePrompt(clip)} title="Copy a ready-to-paste image prompt for Gemini">
+          <ClipboardCopy /> Gemini prompt
         </Button>
       </div>
       <p className="px-4 pt-2 text-[11px] text-muted-foreground">Tip: paste an image with Ctrl+V to put it on this scene.</p>
@@ -173,6 +203,7 @@ function VisualInspector({ clip, track }: { clip: VisualClip; track: VideoTrack 
             { value: "crossfade", label: "Fade" },
             { value: "slide", label: "Slide" },
             { value: "zoom", label: "Zoom" },
+            { value: "flash", label: "Flash" },
           ]}
           onChange={(v) => e.set({ transition: v === "cut" ? null : { type: v, duration: tr?.duration ?? 0.5 } }, "Transition")}
         />
@@ -227,6 +258,7 @@ function VisualInspector({ clip, track }: { clip: VisualClip; track: VideoTrack 
           <SliderField label="Saturation" value={f.saturation} min={0} max={2} onLive={(v) => e.live({ filters: { ...f, saturation: v } })} onDone={() => e.done("Saturation")} />
         </Section>
       )}
+      {clip.type !== "color" && <GradeSection clip={clip} />}
       {clip.keywords?.length ? (
         <Section title="Keywords">
           <div className="flex flex-wrap gap-1">
@@ -242,6 +274,45 @@ function VisualInspector({ clip, track }: { clip: VisualClip; track: VideoTrack 
   );
 }
 
+const LINK_LABEL = { instagram: "Instagram reel", youtube: "YouTube", direct: "Source file" } as const;
+const mmss = (s: number) => `${Math.floor(s / 60)}:${(s % 60).toFixed(1).padStart(4, "0")}`;
+
+/** Where a linked sound came from and which part of it this clip plays (live: follows trims), for Instagram. */
+function SoundSource({ clip }: { clip: AudioClip }) {
+  const asset = useEditor((s) => (clip.assetId ? s.assets[clip.assetId] : undefined));
+  const link = clip.link ?? (asset?.meta?.link ? { url: asset.meta.link.url, kind: asset.meta.link.kind } : null);
+  if (!link) return null;
+  const start = clip.in;
+  const end = clip.in + clip.duration * clip.speed;
+  const rights = asset?.meta?.rights;
+  return (
+    <Section title="Sound source">
+      <a href={link.url} target="_blank" rel="noreferrer" className="flex items-center gap-1.5 truncate text-xs text-primary underline-offset-2 hover:underline" title={link.url}>
+        <ExternalLink className="size-3 shrink-0" /> {LINK_LABEL[link.kind as keyof typeof LINK_LABEL] ?? "Source"} <span className="truncate text-muted-foreground">{link.url.replace(/^https?:\/\/(www\.)?/, "")}</span>
+      </a>
+      <p className="text-xs">
+        Plays <b>{mmss(start)}</b> → {mmss(end)} of the sound. Start the sound at <b>{start.toFixed(1)}s</b> in Instagram.
+      </p>
+      <div className="flex items-center gap-2">
+        <Button
+          size="sm"
+          variant="secondary"
+          className="h-7 text-[11px]"
+          onClick={() =>
+            navigator.clipboard
+              .writeText(`${link.url}\nStart the sound at ${mmss(start)} (${start.toFixed(1)}s), ends ${mmss(end)}`)
+              .then(() => toast.success("Copied the link and start time"))
+              .catch(() => toast.error("Couldn't copy"))
+          }
+        >
+          <ClipboardCopy className="size-3" /> Copy link + start
+        </Button>
+        {rights === false && <span className="text-[11px] text-amber-300">Timing only / personal use</span>}
+      </div>
+    </Section>
+  );
+}
+
 function AudioInspector({ clip, isMusic }: { clip: AudioClip; isMusic: boolean }) {
   const e = useClipEdit(clip.id);
   const playhead = useEditor((s) => s.playhead);
@@ -250,6 +321,7 @@ function AudioInspector({ clip, isMusic }: { clip: AudioClip; isMusic: boolean }
   return (
     <div>
       <Header icon={Music} title={clip.name} id={clip.id} />
+      {isMusic && <SoundSource clip={clip} />}
       <Timing clip={clip} />
       <AudioControls clip={clip} />
       {isMusic && (
@@ -468,6 +540,7 @@ function Multi({ ids }: { ids: string[] }) {
             { value: "crossfade", label: "Fade" },
             { value: "slide", label: "Slide" },
             { value: "zoom", label: "Zoom" },
+            { value: "flash", label: "Flash" },
           ]}
           onChange={applyTransition}
         />
@@ -501,34 +574,5 @@ function ProjectSettings() {
         </p>
       </Section>
     </div>
-  );
-}
-
-/** Generate an AI image for this clip from what's being said over it (plus its keywords). */
-function GenerateForClip({ clip }: { clip: VisualClip }) {
-  const [busy, setBusy] = useState(false);
-  const run = async () => {
-    const tl = useEditor.getState().timeline;
-    const said = mappedWords(tl)
-      .filter((w) => w.start < clipEnd(clip) && w.end > clip.start)
-      .map((w) => w.text)
-      .join(" ");
-    const hint = [clip.keywords?.join(", "), said && `illustrating: "${said}"`].filter(Boolean).join(". ");
-    const prompt = window.prompt("Describe the image (edit or keep the suggestion):", hint || clip.name);
-    if (!prompt?.trim()) return;
-    setBusy(true);
-    try {
-      const asset = await generateImage(prompt.trim(), clip.keywords ?? []);
-      if (replaceClipMedia(clip.id, asset)) toast.success("Generated a new image for this clip");
-    } catch (e) {
-      toast.error((e as Error).message);
-    } finally {
-      setBusy(false);
-    }
-  };
-  return (
-    <Button variant="secondary" size="sm" onClick={run} disabled={busy}>
-      {busy ? <Loader2 className="animate-spin" /> : <Sparkles />} {busy ? "Generating…" : "AI image"}
-    </Button>
   );
 }

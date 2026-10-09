@@ -77,11 +77,11 @@ def render_progress(conn, job_id: str, progress: float):
     conn.execute('UPDATE "RenderJob" SET progress=%s, "lockedAt"=now() WHERE id=%s', (progress, job_id))
 
 
-def render_done(conn, job, *, url, key, thumb_url, duration):
+def render_done(conn, job, *, url, key, thumb_url, duration, report=None):
     with conn.transaction():
         conn.execute("""UPDATE "RenderJob" SET status='done', progress=1, "outputUrl"=%s, "outputKey"=%s,
-                        "thumbUrl"=%s, duration=%s, error=NULL, "finishedAt"=now() WHERE id=%s""",
-                     (url, key, thumb_url, duration, job["id"]))
+                        "thumbUrl"=%s, duration=%s, report=%s, error=NULL, "finishedAt"=now() WHERE id=%s""",
+                     (url, key, thumb_url, duration, Jsonb(report) if report is not None else None, job["id"]))
         conn.execute("""UPDATE "Project" SET status='rendered', "thumbnailUrl"=COALESCE(%s, "thumbnailUrl"),
                         "updatedAt"=now() WHERE id=%s AND status IN ('ready','rendered')""",
                      (thumb_url, job["projectId"]))

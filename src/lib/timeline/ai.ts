@@ -1,4 +1,4 @@
-// AI edit operations: Gemini returns these (validated server-side, with any new
+// AI edit operations: a Claude job writes these to ai-edit.json (validated server-side, with any new
 // visuals already resolved to concrete media), and the editor applies them to its
 // current timeline with applyAiOps(). The resulting JSON patch is shown as a diff
 // preview before the user applies it; applying is one undoable history step.

@@ -1,12 +1,14 @@
 "use client";
 
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { compare, type Operation } from "fast-json-patch";
 import { Check, Eye, EyeOff, Loader2, Sparkles, X } from "lucide-react";
 import { toast } from "sonner";
 import { applyAiOps, type AiOp } from "@/lib/timeline/ai";
 import type { AnyClip, TextClip, Timeline } from "@/lib/timeline/types";
 import { api } from "@/lib/client/api";
+import { useAgentJob, type AgentJobDTO } from "@/lib/client/agent";
+import { AgentLog } from "@/components/agent/AgentLog";
 import { Button } from "@/components/ui/button";
 import { Textarea } from "@/components/ui/textarea";
 import { cn } from "@/lib/utils";
@@ -42,42 +44,71 @@ function describePatch(base: Timeline, patch: Operation[]) {
   });
 }
 
+type AiResult = { summary: string; ops: (AiOp & { why?: string })[] };
+
 export function AiPanel() {
   const [command, setCommand] = useState("");
-  const [busy, setBusy] = useState(false);
+  const [starting, setStarting] = useState(false);
+  const [jobId, setJobId] = useState<string | null>(null);
   const [proposal, setProposal] = useState<Proposal | null>(null);
   const [history, setHistory] = useState<{ command: string; summary: string; applied: boolean }[]>([]);
   const previewing = useEditor((s) => Boolean(s.preview));
   const lines = useMemo(() => (proposal ? describePatch(proposal.base, proposal.patch) : []), [proposal]);
+  // the request a running job belongs to: the command and the exact timeline sent with it
+  const pending = useRef<{ command: string; base: Timeline } | null>(null);
+  const live = useAgentJob(jobId);
+  const busy = starting || Boolean(jobId);
 
   const run = async (cmd = command) => {
     if (!cmd.trim() || busy) return;
-    setBusy(true);
+    setStarting(true);
     setProposal(null);
     useEditor.getState().setPreview(null);
     try {
       const base = useEditor.getState().timeline;
       const { projectId } = useEditor.getState();
-      const res = await api<{ summary: string; ops: (AiOp & { why?: string })[] }>(`/api/projects/${projectId}/ai-edit`, {
+      const { job } = await api<{ job: AgentJobDTO }>(`/api/projects/${projectId}/ai-edit`, {
         method: "POST",
         json: { command: cmd, json: base },
       });
-      const next = applyAiOps(base, res.ops);
-      const patch = compare(base, next);
-      if (!res.ops.length || !patch.length) {
-        toast.info(res.summary || "No changes needed");
-        setHistory((h) => [{ command: cmd, summary: res.summary || "No changes", applied: false }, ...h]);
-        return;
-      }
-      setProposal({ command: cmd, summary: res.summary, ops: res.ops, base, next, patch });
-      useEditor.getState().setPreview(next);
+      pending.current = { command: cmd, base };
+      setJobId(job.id);
       setCommand("");
     } catch (e) {
       toast.error((e as Error).message);
     } finally {
-      setBusy(false);
+      setStarting(false);
     }
   };
+
+  // When Claude finishes, fetch the validated ops (replace_visual resolved) and preview them.
+  useEffect(() => {
+    const job = live.job;
+    if (!jobId || !job || job.id !== jobId || !live.finished) return;
+    const req = pending.current;
+    setJobId(null);
+    pending.current = null;
+    if (!req) return;
+    if (job.status !== "done") {
+      if (job.status === "failed") toast.error(job.error ?? "The AI edit failed");
+      setHistory((h) => [{ command: req.command, summary: job.status === "cancelled" ? "Cancelled" : (job.error ?? "Failed"), applied: false }, ...h]);
+      return;
+    }
+    const { projectId } = useEditor.getState();
+    api<AiResult>(`/api/projects/${projectId}/ai-edit?jobId=${job.id}`)
+      .then((res) => {
+        const next = applyAiOps(req.base, res.ops);
+        const patch = compare(req.base, next);
+        if (!res.ops.length || !patch.length) {
+          toast.info(res.summary || "No changes needed");
+          setHistory((h) => [{ command: req.command, summary: res.summary || "No changes", applied: false }, ...h]);
+          return;
+        }
+        setProposal({ command: req.command, summary: res.summary, ops: res.ops, base: req.base, next, patch });
+        useEditor.getState().setPreview(next);
+      })
+      .catch((e) => toast.error((e as Error).message));
+  }, [jobId, live.job, live.finished]);
 
   const apply = () => {
     if (!proposal) return;
@@ -115,8 +146,9 @@ export function AiPanel() {
           disabled={busy}
         />
         <Button className="w-full" onClick={() => run()} disabled={busy || !command.trim()}>
-          {busy ? <Loader2 className="animate-spin" /> : <Sparkles />} {busy ? "Thinking…" : "Propose edit"}
+          {busy ? <Loader2 className="animate-spin" /> : <Sparkles />} {busy ? "Claude is working…" : "Propose edit"}
         </Button>
+        <p className="text-[11px] text-muted-foreground">Runs as a Claude job on your subscription (needs the agent runner). Follow-ups continue the same session.</p>
         <div className="flex flex-wrap gap-1">
           {EXAMPLES.map((ex) => (
             <button key={ex} type="button" className="rounded-full border px-2 py-0.5 text-[11px] text-muted-foreground hover:border-primary hover:text-foreground" onClick={() => run(ex)} disabled={busy}>
@@ -125,6 +157,8 @@ export function AiPanel() {
           ))}
         </div>
       </div>
+
+      {jobId && <AgentLog job={live.job} events={live.events} onCancel={() => live.cancel().catch((e) => toast.error(e.message))} compact />}
 
       {proposal && (
         <div className="space-y-3 rounded-lg border border-amber-400/40 bg-amber-400/5 p-3">

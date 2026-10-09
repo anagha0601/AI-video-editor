@@ -11,13 +11,11 @@ import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover
 import { cn } from "@/lib/utils";
 
 type Filter = "all" | "video" | "image" | "music" | "audio";
-type SourceFilter = "all" | "upload" | "pexels" | "gemini_manual" | "ai";
+type SourceFilter = "all" | "upload" | "gemini_manual";
 const SOURCES: { id: SourceFilter; label: string }[] = [
   { id: "all", label: "Any source" },
   { id: "upload", label: "Uploads" },
-  { id: "pexels", label: "Pexels" },
   { id: "gemini_manual", label: "Gemini (manual)" },
-  { id: "ai", label: "AI generated" },
 ];
 
 const FILTERS: { id: Filter; label: string }[] = [

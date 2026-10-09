@@ -1,9 +1,8 @@
-import { lookup } from "node:dns/promises";
-import net from "node:net";
 import { nanoid } from "nanoid";
 import { z } from "zod";
 import { prisma } from "@/server/db";
 import { HttpError, requireUserId, route } from "@/server/http";
+import { safeDownload } from "@/server/safefetch";
 import { putObject } from "@/server/storage";
 
 export const maxDuration = 30;
@@ -15,40 +14,7 @@ export const maxDuration = 30;
 
 const MAX_BYTES = 20 * 1024 * 1024;
 
-function isPrivate(ip: string) {
-  if (net.isIPv4(ip)) {
-    const [a, b] = ip.split(".").map(Number);
-    return a === 10 || a === 127 || a === 0 || (a === 169 && b === 254) || (a === 172 && b >= 16 && b <= 31) || (a === 192 && b === 168) || (a === 100 && b >= 64 && b <= 127) || a >= 224;
-  }
-  const v = ip.toLowerCase();
-  return v === "::1" || v === "::" || v.startsWith("fc") || v.startsWith("fd") || v.startsWith("fe80") || v.startsWith("::ffff:127.") || v.startsWith("::ffff:10.") || v.startsWith("::ffff:192.168.");
-}
-
-async function assertPublic(url: URL) {
-  if (url.protocol !== "https:" && url.protocol !== "http:") throw new HttpError(400, "Only http(s) image links can be imported");
-  const addrs = await lookup(url.hostname, { all: true }).catch(() => []);
-  if (!addrs.length || addrs.some((a) => isPrivate(a.address))) throw new HttpError(400, "That address can't be imported");
-}
-
-async function download(raw: string) {
-  let url = new URL(raw);
-  for (let hop = 0; hop < 4; hop++) {
-    await assertPublic(url);
-    const res = await fetch(url, { redirect: "manual", signal: AbortSignal.timeout(15_000), headers: { "User-Agent": "Mozilla/5.0 ReelSmith-import" } });
-    if (res.status >= 300 && res.status < 400 && res.headers.get("location")) {
-      url = new URL(res.headers.get("location")!, url);
-      continue;
-    }
-    if (!res.ok) throw new HttpError(400, `Couldn't download the image (${res.status})`);
-    const type = (res.headers.get("content-type") ?? "").split(";")[0].trim();
-    if (!type.startsWith("image/")) throw new HttpError(400, "That link isn't an image");
-    if (Number(res.headers.get("content-length") ?? 0) > MAX_BYTES) throw new HttpError(413, "Image is too large (20 MB max)");
-    const buf = Buffer.from(await res.arrayBuffer());
-    if (buf.length > MAX_BYTES) throw new HttpError(413, "Image is too large (20 MB max)");
-    return { buf, type };
-  }
-  throw new HttpError(400, "Too many redirects");
-}
+const download = (raw: string) => safeDownload(raw, { maxBytes: MAX_BYTES, what: "image", accept: (type) => type.startsWith("image/") });
 
 const body = z.object({
   url: z.string().url().max(4000),

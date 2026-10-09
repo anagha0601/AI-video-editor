@@ -5,12 +5,10 @@ import type { Aspect, Timeline, VisualClip, VoiceTrack as VoiceTrackT, VideoTrac
 import { prisma } from "./db";
 import { splitScenes } from "./scenes";
 import { clipFromAsset, pickVisual, scoreAsset } from "./visuals";
-import { hasGemini } from "./gemini";
-import { generateImageAsset, pool } from "./generate";
 
 type Transcript = { words: Word[]; duration?: number; language?: string };
 
-/** transcript -> Gemini scenes -> matched visuals -> timeline JSON (the "first cut"). */
+/** transcript -> scenes -> matched visuals (your library, else gradient cards) -> timeline JSON (the "first cut"). */
 export async function buildFirstCut(projectId: string) {
   const project = await prisma.project.findUniqueOrThrow({ where: { id: projectId }, include: { voice: true } });
   const voice = project.voice;
@@ -20,7 +18,7 @@ export async function buildFirstCut(projectId: string) {
   const aspect = project.aspect as Aspect;
   const duration = voice.duration ?? transcript.duration ?? (words.length ? words[words.length - 1].end + 0.5 : 5);
 
-  const split = await splitScenes(words, duration, aspect, { projectId, userId: project.userId });
+  const split = splitScenes(words, duration);
   const library = await prisma.mediaAsset.findMany({
     where: { userId: project.userId, type: { in: ["video", "image"] } },
     orderBy: { createdAt: "desc" },
@@ -28,7 +26,6 @@ export async function buildFirstCut(projectId: string) {
   });
 
   const used = new Set<string>();
-  const mode = project.visualMode; // auto | ai | stock
   const scenes = split.scenes;
 
   // 0) Media the user attached to this project always goes in: best keyword match
@@ -56,8 +53,6 @@ export async function buildFirstCut(projectId: string) {
   });
 
   const visuals: VisualClip[] = [];
-  const needsAi: { clip: VisualClip; scene: (typeof scenes)[number] }[] = [];
-  const canAi = hasGemini() && mode !== "stock";
   // Sequential on purpose: keeps "used" consistent so scenes don't repeat a shot.
   for (let i = 0; i < scenes.length; i++) {
     const s = scenes[i];
@@ -74,41 +69,15 @@ export async function buildFirstCut(projectId: string) {
       const mine = shot === 0 ? assigned.get(i) : undefined;
       const pick = mine
         ? { asset: mine }
-        : await pickVisual({
-            userId: project.userId,
-            library,
-            keywords: s.visual_keywords,
-            query: s.query,
-            duration: dur,
-            aspect,
-            used,
-            index: i + shot,
-            useLibrary: mode !== "ai",
-            useStock: mode !== "ai",
-          });
+        : pickVisual({ library, keywords: s.visual_keywords, used, index: i + shot });
       const clip = pick.asset
         ? clipFromAsset(pick.asset, cursor, dur, { ...extra, name: `Scene ${i + 1} · ${mine ? pick.asset.name : s.query || pick.asset.name}` })
         : newVisualClip({ type: "color", start: cursor, duration: dur, colors: pick.colors, ...extra });
-      if (!pick.asset && canAi) needsAi.push({ clip, scene: s });
       if (shot === 2 || !pick.asset) clip.duration = dur; // hold the final frame / fill the scene
       visuals.push(clip);
       cursor += clip.duration;
     }
   }
-
-  // 1) AI-generated stills for scenes without footage (in parallel, gradient stays on failure).
-  await pool(needsAi, 4, async ({ clip, scene }) => {
-    try {
-      const prompt = `${scene.image_prompt}${split.style ? `. Visual style: ${split.style}` : ""}`;
-      const a = await generateImageAsset(project.userId, prompt, aspect, scene.visual_keywords, projectId);
-      Object.assign(clip, clipFromAsset(a, clip.start, clip.duration, { scene: clip.scene, keywords: clip.keywords, visualHint: clip.visualHint, name: `Scene ${clip.scene} · AI` }), {
-        id: clip.id,
-        kenBurns: { direction: (["in", "out", "left", "right"] as const)[(clip.scene ?? 0) % 4], amount: 0.12 },
-      });
-    } catch (err) {
-      console.error("[first-cut] AI image failed", err);
-    }
-  });
 
   const tl: Timeline = emptyTimeline(aspect);
   const assetId = voice.assetId ?? voice.id;
@@ -136,7 +105,7 @@ export async function buildFirstCut(projectId: string) {
       where: { id: projectId },
       data: {
         status: "ready",
-        statusMessage: split.ai ? null : "Built without Gemini (heuristic scenes)",
+        statusMessage: null,
         duration,
         thumbnailUrl: project.thumbnailUrl ?? firstThumb,
         title: project.title === "Untitled video" && split.title ? split.title.slice(0, 80) : project.title,

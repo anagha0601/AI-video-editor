@@ -79,12 +79,12 @@ def process_render(conn, job):
                 last[0] = p
                 db.render_progress(conn, job["id"], round(p, 3))
 
-        out, thumb, duration = render.run(tl, job["quality"], lambda u: storage.fetch(u, work / "media"), work,
+        out, thumb, duration, report = render.run(tl, job["quality"], lambda u: storage.fetch(u, work / "media"), work,
                                           on_progress)
         key = f"renders/{job['projectId']}/{job['id']}.mp4"
         url = storage.put_file(key, out, "video/mp4")
         thumb_url = storage.put_file(f"renders/{job['projectId']}/{job['id']}.jpg", thumb, "image/jpeg") if thumb else None
-        db.render_done(conn, job, url=url, key=key, thumb_url=thumb_url, duration=duration)
+        db.render_done(conn, job, url=url, key=key, thumb_url=thumb_url, duration=duration, report=report)
         print(f"[render] done {url}", flush=True)
     except Exception as exc:
         traceback.print_exc()

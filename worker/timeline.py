@@ -190,6 +190,47 @@ def ken_burns_exprs(kb, p: str):
     return f"{1 + a}", "0.5", p
 
 
+# ------------------------------------------------------------------ beat effects (derive.ts fxAt)
+
+FX_SHAKE = {"zoom": 2.2, "fx": 17, "fy": 11, "ky": 0.7, "phase": 1.3}
+
+
+def fx_groups(fx, fps: int):
+    """Beat effects -> groups whose windows overlap, each [start, end) in timeline seconds with its effects."""
+    evs = sorted((e for e in fx or [] if e.get("duration", 0) > 0 and e.get("strength", 0) > 0), key=lambda e: e["t"])
+    groups = []
+    for e in evs:
+        a, b = float(e["t"]), float(e["t"]) + float(e["duration"])
+        if groups and a < groups[-1]["end"]:
+            groups[-1]["end"] = max(groups[-1]["end"], b)
+            groups[-1]["fx"].append(e)
+        else:
+            groups.append({"start": a, "end": b, "fx": [e]})
+    return groups
+
+
+def fx_exprs(group, time: str):
+    """ffmpeg expressions (zoom, dx, dy, brightness) of one group at time expression `time`.
+
+    dx/dy are fractions of the frame, unclamped (the caller clamps them to the zoom's room)."""
+    zs, dx, dy, br = [], [], [], []
+    for e in group["fx"]:
+        t0, d, s = float(e["t"]), float(e["duration"]), float(e["strength"])
+        r = f"({time}-{t0:.5f})"
+        v = f"if(between({r},0,{d:.5f}),1-{r}/{d:.5f},0)"  # 0 outside the window, like derive.ts
+        if e["type"] == "punch":
+            zs.append(f"{s:.5f}*pow({v},2)")
+        elif e["type"] == "flash":
+            br.append(f"{s:.5f}*pow({v},2)")
+        else:
+            k = FX_SHAKE
+            zs.append(f"{k['zoom'] * s:.5f}*{v}")
+            dx.append(f"{s:.5f}*{v}*sin({2 * 3.141592653589793 * k['fx']:.5f}*{r})")
+            dy.append(f"{k['ky'] * s:.5f}*{v}*sin({2 * 3.141592653589793 * k['fy']:.5f}*{r}+{k['phase']})")
+    join = lambda xs: "+".join(xs) if xs else "0"
+    return f"(1+{join(zs)})", f"({join(dx)})", f"({join(dy)})", f"min(1,{join(br)})" if br else None
+
+
 def adjacent_prev(clips, clip):
     best = None
     for c in clips:
